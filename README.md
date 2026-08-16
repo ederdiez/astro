@@ -1,46 +1,136 @@
 # Astro
 
-Obsidian-like markdown editor in the browser. **Galaxies** hold **stars** (folders) and **planets** (notes). Void theme: black & white, minimalist.
+A minimal, self-hosted Markdown note-taking application inspired by Obsidian.
 
 ## Requirements
 
-- Python 3.14+
+* Python 3.14+
+* Git
 
-## Run
+## Installation
+
+### Linux / macOS
 
 ```bash
+git clone https://github.com/ederdiez/astro.git
+cd astro
+
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python app.py
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python app.py
 ```
 
-Open http://0.0.0.0:5005 (server listens on port 5005).
+Open `http://127.0.0.1:5005`.
 
-## Usage
+### Windows
 
-- Top bar: galaxy manager (switch / create / import), search planets
-- Sidebar: star/planet tree — hover a row for create / rename / delete actions
-- Split view: markdown editor + live preview
-- Autosave (debounced) + `Ctrl+S`
-- `[[Wikilinks]]` open planets; dead links shown dashed until the planet exists
-- Galaxies live in `galaxies/`; on first run you must create or import one. The current one is persisted in `galaxy_path.json` (gitignored)
+Install Python and Git, then run:
 
-## API
+```powershell
+git clone https://github.com/ederdiez/astro.git
+cd astro
 
-| Method | Route            | Purpose                     |
-|--------|------------------|-----------------------------|
-| GET    | `/api/galaxy`    | Get current galaxy path (null if none) |
-| PUT    | `/api/galaxy`    | Switch to an existing galaxy |
-| GET    | `/api/galaxies`  | List galaxies               |
-| POST   | `/api/galaxies`  | Create galaxy `{name}`      |
-| POST   | `/api/galaxy/import` | Import galaxy `{source, name}` (copies into `galaxies/`, or adopts if already there) |
-| GET    | `/api/tree`      | Star/planet tree (`.md` only) |
-| GET    | `/api/file`      | Read planet content         |
-| PUT    | `/api/file`      | Save planet content         |
-| POST   | `/api/file`      | Create planet               |
-| POST   | `/api/star`      | Create star (folder)        |
-| POST   | `/api/rename`    | Rename star/planet          |
-| DELETE | `/api/file`      | Delete star/planet          |
-| GET    | `/api/search`    | Search content across galaxy |
-| GET    | `/api/dirs`      | List folders (galaxy import browser) |
-| GET/POST | `/api/preview` | Server-side markdown render |
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+python app.py
+```
+
+Open `http://127.0.0.1:5005`.
+
+If PowerShell blocks script execution, activate the environment with:
+
+```cmd
+.venv\Scripts\activate.bat
+```
+
+## Self-hosting
+
+Astro can run on any computer or server with Python installed.
+
+```bash
+git clone https://github.com/ederdiez/astro.git
+cd astro
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+The server listens on port `5005`.
+
+For permanent deployments, Astro can be run as a `systemd` service on Linux or as a background service on Windows/macOS.
+
+## Remote access with Tailscale
+
+Tailscale allows you to access Astro privately from your other devices without exposing the application directly to the Internet. Tailscale provides clients for Linux, Windows, macOS, iOS and Android.
+
+### Server
+
+Install Tailscale on the machine running Astro and log in:
+
+```bash
+sudo tailscale up
+```
+
+Then find its Tailscale IP:
+
+```bash
+tailscale ip
+```
+
+### Client
+
+Install Tailscale on your PC, Mac or phone and log in with the same account.
+
+You can then access Astro using:
+
+```text
+http://TAILSCALE_IP:5005
+```
+
+For example:
+
+```text
+http://100.x.x.x:5005
+```
+
+### Tailscale Serve
+
+For HTTPS and a cleaner address, you can use Tailscale Serve:
+
+```bash
+sudo tailscale serve --bg 5005
+```
+
+Tailscale will provide a private HTTPS address accessible from devices in your tailnet.
+
+## Data
+
+Notes are stored as regular Markdown files inside:
+
+```text
+galaxies/
+```
+
+No database is required. Your notes can be backed up, copied or edited independently of Astro.
+
+## Features
+
+* Markdown editor
+* Live preview
+* Autosave
+* Wikilinks with `[[Note]]`
+* Search
+* Multiple galaxies
+* Import existing Markdown collections
+* Graph view
+* No database
+* Fully self-hosted
+
+## License
+
+See the repository for license information.
