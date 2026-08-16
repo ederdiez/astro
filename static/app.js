@@ -1,0 +1,1373 @@
+(function () {
+  "use strict";
+
+  const $ = (sel) => document.querySelector(sel);
+  const treeRoot = $("#tree-root");
+  const editor = $("#editor");
+  const searchInput = $("#search-input");
+  const searchResults = $("#search-results");
+  const saveState = $("#save-state");
+
+  let tree = [];
+  let currentFile = null;
+  let dirty = false;
+  let saveTimer = null;
+  let currentGalaxyPath = "";
+  const openState = new Map();
+
+  async function api(method, url, body) {
+    const opts = { method, headers: {} };
+    if (body !== undefined) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, opts);
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (e) {}
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+
+  // ---------- Mobile drawer + tabs ----------
+
+  const menuBtn = $("#menu-btn");
+  const backdrop = $("#backdrop");
+
+  function closeDrawer() {
+    document.body.classList.remove("sidebar-open");
+    backdrop.classList.remove("show");
+  }
+
+  menuBtn.addEventListener("click", () => {
+    const open = document.body.classList.toggle("sidebar-open");
+    backdrop.classList.toggle("show", open);
+  });
+
+  backdrop.addEventListener("click", closeDrawer);
+
+  // ---------- Tree ----------
+
+  async function loadTree() {
+    try {
+      const data = await api("GET", "/api/tree");
+      tree = data.tree;
+      renderTree();
+      LiveEditor.setNotes(collectFiles(tree));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function renderTree() {
+    const sidebar = $("#sidebar");
+    const scrollTop = sidebar.scrollTop;
+    treeRoot.innerHTML = "";
+    if (!tree.length) {
+      treeRoot.innerHTML = '<div class="empty">empty galaxy — use "+ Planet"</div>';
+      return;
+    }
+    const ul = document.createElement("ul");
+    ul.className = "tree";
+    tree.forEach((entry) => ul.appendChild(renderEntry(entry)));
+    treeRoot.appendChild(ul);
+    sidebar.scrollTop = scrollTop;
+  }
+
+  function renderEntry(entry) {
+    const li = document.createElement("li");
+    li.dataset.path = entry.path;
+    const row = document.createElement("div");
+    row.className = "row";
+    if (entry.type === "star") {
+      li.classList.add("star");
+      const isOpen = !openState.has(entry.path) || openState.get(entry.path);
+      if (isOpen) li.classList.add("open");
+      const twist = document.createElement("span");
+      twist.className = "twist";
+      twist.textContent = isOpen ? "▾" : "▸";
+      const icon = document.createElement("span");
+      icon.className = "star-icon";
+      icon.textContent = "★";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = entry.path.split("/").pop();
+      row.append(twist, icon, name);
+      row.appendChild(actions(li, entry));
+      li.appendChild(row);
+      const childUl = document.createElement("ul");
+      (entry.children || []).forEach((child) => childUl.appendChild(renderEntry(child)));
+      li.appendChild(childUl);
+      if (!isOpen) childUl.style.display = "none";
+      twist.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const open = li.classList.toggle("open");
+        openState.set(entry.path, open);
+        twist.textContent = open ? "▾" : "▸";
+        childUl.style.display = open ? "" : "none";
+      });
+      li.addEventListener("click", (e) => {
+        if (e.target.closest(".actions")) return;
+        twist.click();
+      });
+    } else {
+      const icon = document.createElement("span");
+      icon.className = "planet-icon";
+      icon.textContent = "●";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = entry.path.split("/").pop();
+      row.append(icon, name);
+      row.appendChild(actions(li, entry));
+      li.appendChild(row);
+      li.addEventListener("click", (e) => {
+        if (e.target.closest(".actions")) return;
+        openFile(entry.path);
+      });
+    }
+    return li;
+  }
+
+  function actions(li, entry) {
+    const box = document.createElement("span");
+    box.className = "actions";
+    const mk = (label, fn, title) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.title = title || label;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        fn();
+      });
+      box.appendChild(b);
+    };
+    if (entry.type === "star") {
+      mk("+p", () => createEntry("planet", entry.path), "New planet");
+      mk("+s", () => createEntry("star", entry.path), "New star");
+    }
+    mk("✎", () => renameEntry(entry));
+    mk("×", () => deleteEntry(entry));
+    return box;
+  }
+
+  function collectFiles(list) {
+    const files = [];
+    list.forEach((e) => {
+      if (e.type === "planet") files.push(e.path);
+      else files.push(...collectFiles(e.children));
+    });
+    return files;
+  }
+
+  // ---------- File ops ----------
+
+  $("#new-planet-btn").addEventListener("click", () => createEntry("planet", ""));
+  $("#new-star-btn").addEventListener("click", () => createEntry("star", ""));
+  $("#collapse-all-btn").addEventListener("click", () => {
+    document.querySelectorAll(".tree li.star").forEach((li) => {
+      li.classList.remove("open");
+      openState.set(li.dataset.path, false);
+      const t = li.querySelector(".twist");
+      if (t) t.textContent = "▸";
+      const child = li.querySelector(":scope > ul");
+      if (child) child.style.display = "none";
+    });
+  });
+
+  async function openFile(path) {
+    if (dirty && currentFile) await saveFile();
+    const data = await api("GET", "/api/file?path=" + encodeURIComponent(path));
+    currentFile = path;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    liveApply(data.content, 0);
+    editor.scrollTop = 0;
+    dirty = false;
+    saveState.textContent = "";
+    document.querySelectorAll(".tree li").forEach((li) => li.classList.remove("selected"));
+    const li = document.querySelector(`.tree li[data-path="${CSS.escape(path)}"]`);
+    if (li) li.classList.add("selected");
+    closeDrawer();
+    editor.focus();
+  }
+
+  async function saveFile() {
+    if (!currentFile) return;
+    saveState.textContent = "saving…";
+    try {
+      await api("PUT", "/api/file?path=" + encodeURIComponent(currentFile), {
+        content: LiveEditor.source(editor),
+      });
+      dirty = false;
+      const t = new Date();
+      saveState.textContent =
+        "saved " + t.toTimeString().slice(0, 8);
+    } catch (err) {
+      saveState.textContent = "error";
+    }
+  }
+
+  async function createEntry(type, folderPath) {
+    const base = folderPath ? folderPath + "/" : "";
+    const name = await promptInput(
+      type === "planet" ? "New planet" : "New star",
+      base + (type === "planet" ? "untitled.md" : "new-star")
+    );
+    if (!name) return;
+    try {
+      if (type === "planet") {
+        await api("POST", "/api/file", { path: name });
+      } else {
+        await api("POST", "/api/star", { path: name });
+      }
+      await loadTree();
+      if (type === "planet") await openFile(name);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function renameEntry(entry) {
+    const name = await promptInput("Rename", entry.path, "Rename");
+    if (!name || name === entry.path) return;
+    try {
+      if (dirty && currentFile) await saveFile();
+      await api("POST", "/api/rename", { from: entry.path, to: name });
+      if (currentFile && (currentFile === entry.path || currentFile.startsWith(entry.path + "/"))) {
+        currentFile = entry.type === "planet" ? name : name + currentFile.slice(entry.path.length);
+        dirty = true;
+      }
+      await loadTree();
+      if (dirty) await saveFile();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function deleteEntry(entry) {
+    const ok = await confirmBox(
+      "Delete " + entry.type + "?",
+      entry.path + (entry.type === "star" ? "\nThis cannot be undone." : "")
+    );
+    if (!ok) return;
+    try {
+      await api("DELETE", "/api/file?path=" + encodeURIComponent(entry.path));
+      if (currentFile === entry.path || currentFile.startsWith(entry.path + "/")) {
+        currentFile = null;
+        editor.innerHTML = "";
+        lastSource = "";
+        dirty = false;
+      }
+      await loadTree();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // ---------- Live editor ----------
+
+  let lastSource = "";
+  let suppressSel = false;
+  let selPending = false;
+  const undoStack = [];
+  const redoStack = [];
+
+  function liveApply(source, caret) {
+    const scrollTop = editor.scrollTop;
+    editor.innerHTML = LiveEditor.render(source, caret);
+    editor.scrollTop = scrollTop;
+    if (caret >= 0) {
+      LiveEditor.setCaret(editor, caret);
+      suppressSel = true;
+    }
+    lastSource = source;
+  }
+
+  editor.addEventListener("input", (e) => {
+    if (e.isComposing) return;
+    const prev = lastSource;
+    const offset = LiveEditor.caretOffset(editor);
+    const md = LiveEditor.source(editor);
+    if (md !== prev) {
+      undoStack.push(prev);
+      if (undoStack.length > 300) undoStack.shift();
+      redoStack.length = 0;
+    }
+    liveApply(md, offset);
+    dirty = true;
+    saveState.textContent = "unsaved";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveFile, 800);
+  });
+
+  editor.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      const offset = LiveEditor.caretOffset(editor);
+      let s;
+      if (e.shiftKey) {
+        s = redoStack.pop();
+        if (s !== undefined) undoStack.push(lastSource);
+      } else {
+        s = undoStack.pop();
+        if (s !== undefined) redoStack.push(lastSource);
+      }
+      if (s !== undefined) {
+        liveApply(s, Math.min(offset, s.length));
+        dirty = true;
+        saveState.textContent = "unsaved";
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveFile, 800);
+      }
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      document.execCommand("insertText", false, "    ");
+    }
+  });
+
+  editor.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData("text/plain");
+    document.execCommand("insertText", false, text);
+  });
+
+  editor.addEventListener("drop", (e) => e.preventDefault());
+
+  document.addEventListener("selectionchange", () => {
+    if (suppressSel) {
+      suppressSel = false;
+      return;
+    }
+    if (selPending) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const r = sel.getRangeAt(0);
+    if (!editor.contains(r.startContainer)) return;
+    if (!r.collapsed) return;
+    selPending = true;
+    requestAnimationFrame(() => {
+      selPending = false;
+      const offset = LiveEditor.caretOffset(editor);
+      const md = LiveEditor.source(editor);
+      if (md !== lastSource) return;
+      liveApply(md, offset);
+    });
+  });
+
+  editor.addEventListener("click", (e) => {
+    const wl = e.target.closest(".lp-wikilink");
+    if (wl) {
+      e.preventDefault();
+      const name = wl.dataset.note || "";
+      const files = collectFiles(tree);
+      const file = files.includes(name)
+        ? name
+        : files.includes(name + ".md")
+        ? name + ".md"
+        : null;
+      if (file) openFile(file);
+      return;
+    }
+    const ext = e.target.closest(".lp-link");
+    if (ext && ext.dataset.url) {
+      e.preventDefault();
+      const url = ext.dataset.url;
+      if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener");
+    }
+  });
+
+  // ---------- Galaxy graph ----------
+
+  const graphBtn = $("#graph-btn");
+  const graphOverlay = $("#graph-overlay");
+  const graphSvg = $("#graph-svg");
+  const graphClose = $("#graph-close");
+  const graphPauseBtn = $("#graph-pause");
+  let graphAnim = null;
+  let graphView = null;
+  let graphHome = null;
+  let sim = null;
+  let graphBodies = [];
+
+  const STAR_COLORS = [
+    "#aabfff",
+    "#cad7ff",
+    "#f8f7ff",
+    "#fdf4cf",
+    "#fff4a8",
+    "#ffddaa",
+    "#ffb56b",
+    "#ff8c6b",
+  ];
+  const PLANET_COLORS = [
+    "#9c9c9c",
+    "#e8cfa0",
+    "#6b93d6",
+    "#e27b58",
+    "#d8b28c",
+    "#e8d5a3",
+    "#7fd4d4",
+    "#4a68c4",
+  ];
+  const ORBIT_GAP = 8;
+  const KEPLER_K = 45;
+  const ECC_MAX = 0.12;
+  const COMPRESS = 8;
+  const TWO_PI = Math.PI * 2;
+  const MIN_SCREEN_A = 0.7;
+
+  function hashStr(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+
+  function starColor(path) {
+    return STAR_COLORS[hashStr(path) % STAR_COLORS.length];
+  }
+
+  function planetColor(path) {
+    return PLANET_COLORS[hashStr(path) % PLANET_COLORS.length];
+  }
+
+  function planetRadius(size) {
+    return Math.min(18, 2.5 + 1.1 * Math.pow(size || 0, 0.28));
+  }
+
+  function eccFor(path) {
+    return ((hashStr(path + ":e") % 1000) / 1000) * ECC_MAX;
+  }
+
+  function phaseFor(path) {
+    return ((hashStr(path + ":p") % 1000) / 1000) * Math.PI * 2;
+  }
+
+  function solveKepler(M, e) {
+    if (!e) return M;
+    let E = M + e * Math.sin(M);
+    for (let i = 0; i < 2; i++) {
+      E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+    }
+    return E;
+  }
+
+  function compressExtent(extent) {
+    return Math.min(extent, COMPRESS * Math.sqrt(extent));
+  }
+
+  function computeRadii(node) {
+    if (node.type === "planet") {
+      node.r = planetRadius(node.size);
+      return { r: node.r, maxPlanet: node.r };
+    }
+    let maxPlanet = 0;
+    let maxChildStar = 0;
+    node._children.forEach((c) => {
+      const res = computeRadii(c);
+      maxPlanet = Math.max(maxPlanet, res.maxPlanet);
+      if (c.type === "star") maxChildStar = Math.max(maxChildStar, res.r);
+    });
+    node.r = Math.max(5 + 1.6 * maxPlanet, maxChildStar * 1.05 + 1);
+    return { r: node.r, maxPlanet };
+  }
+
+  function assignOrbits(node) {
+    node._children.forEach((c) => {
+      if (c.type === "star") c.sysExtent = assignOrbits(c);
+    });
+    const planets = node._children
+      .filter((c) => c.type === "planet")
+      .sort((a, b) => a.r - b.r);
+    const stars = node._children
+      .filter((c) => c.type === "star")
+      .sort((a, b) => a.sysExtent - b.sysExtent);
+    let cum = node.r + ORBIT_GAP;
+    let reach = 0;
+    node._orbits = [];
+    for (const child of planets.concat(stars)) {
+      const e = eccFor(child.path);
+      const bodyR =
+        child.type === "planet" ? child.r : compressExtent(child.sysExtent);
+      const aReq = (node.r + bodyR + ORBIT_GAP) / (1 - e);
+      const aSeq = (cum + bodyR) / (1 + e);
+      const a = Math.max(aReq, aSeq);
+      node._orbits.push({ child, a, e, phi: phaseFor(child.path) });
+      cum = a * (1 + e) + bodyR + ORBIT_GAP;
+      reach = Math.max(
+        reach,
+        a * (1 + e) + (child.type === "planet" ? child.r : child.sysExtent)
+      );
+    }
+    node.sysExtent = Math.max(node.r, reach);
+    return node.sysExtent;
+  }
+
+  graphBtn.addEventListener("click", openGraph);
+  graphClose.addEventListener("click", closeGraph);
+  graphPauseBtn.addEventListener("click", () => {
+    if (!sim) return;
+    sim.userPaused = !sim.userPaused;
+    if (sim.userPaused) {
+      sim.running = false;
+      cancelAnimationFrame(graphAnim);
+      graphAnim = null;
+      graphPauseBtn.textContent = "▶";
+    } else {
+      wakeSim();
+    }
+  });
+  graphOverlay.addEventListener("click", (e) => {
+    if (e.target === graphOverlay) closeGraph();
+  });
+
+  $("#graph-zoom-in").addEventListener("click", () => {
+    if (!graphView) return;
+    const r = graphSvg.getBoundingClientRect();
+    zoomView(r.width / 2, r.height / 2, 1.25);
+  });
+  $("#graph-zoom-out").addEventListener("click", () => {
+    if (!graphView) return;
+    const r = graphSvg.getBoundingClientRect();
+    zoomView(r.width / 2, r.height / 2, 0.8);
+  });
+  $("#graph-reset").addEventListener("click", () => {
+    if (!graphView) return;
+    if (graphHome) {
+      graphView.x = graphHome.x;
+      graphView.y = graphHome.y;
+      graphView.k = graphHome.k;
+    } else {
+      graphView.k = 1;
+      graphView.x = 0;
+      graphView.y = 0;
+    }
+    applyView();
+  });
+
+  function clampZoom(k) {
+    return Math.max(0.001, Math.min(6, k));
+  }
+
+  function applyView() {
+    if (!graphView) return;
+    graphView.g.setAttribute(
+      "transform",
+      `translate(${graphView.x},${graphView.y}) scale(${graphView.k})`
+    );
+    graphSvg.classList.toggle("mini", graphView.k < 0.35);
+    wakeSim();
+  }
+
+  function zoomView(sx, sy, factor) {
+    if (!graphView) return;
+    const k2 = clampZoom(graphView.k * factor);
+    const real = k2 / graphView.k;
+    graphView.x = sx - real * (sx - graphView.x);
+    graphView.y = sy - real * (sy - graphView.y);
+    graphView.k = k2;
+    applyView();
+  }
+
+  function svgPoint(clientX, clientY) {
+    const rect = graphSvg.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  const pointers = new Map();
+  let pan = null;
+  let pinch = null;
+
+  graphSvg.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".graph-node")) return;
+    graphSvg.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, {
+      x: svgPoint(e.clientX, e.clientY).x,
+      y: svgPoint(e.clientX, e.clientY).y,
+      cx: e.clientX,
+      cy: e.clientY,
+    });
+    if (pointers.size === 1) {
+      pan = { sx: e.clientX, sy: e.clientY, vx: graphView.x, vy: graphView.y };
+      pinch = null;
+      graphSvg.classList.add("panning");
+    } else if (pointers.size === 2) {
+      const pts = [...pointers.values()];
+      pinch = {
+        d: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) || 1,
+        cx: (pts[0].x + pts[1].x) / 2,
+        cy: (pts[0].y + pts[1].y) / 2,
+        vx: graphView.x,
+        vy: graphView.y,
+        vk: graphView.k,
+      };
+      pan = null;
+    }
+  });
+
+  graphSvg.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const p = svgPoint(e.clientX, e.clientY);
+    const pt = pointers.get(e.pointerId);
+    pt.x = p.x;
+    pt.y = p.y;
+    pt.cx = e.clientX;
+    pt.cy = e.clientY;
+    if (pinch && pointers.size >= 2) {
+      const pts = [...pointers.values()];
+      const d = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) || 1;
+      const cx = (pts[0].x + pts[1].x) / 2;
+      const cy = (pts[0].y + pts[1].y) / 2;
+      const k2 = clampZoom(pinch.vk * (d / pinch.d));
+      graphView.x = cx - (k2 * (pinch.cx - pinch.vx)) / pinch.vk;
+      graphView.y = cy - (k2 * (pinch.cy - pinch.vy)) / pinch.vk;
+      graphView.k = k2;
+      applyView();
+    } else if (pan) {
+      graphView.x = pan.vx + (e.clientX - pan.sx);
+      graphView.y = pan.vy + (e.clientY - pan.sy);
+      applyView();
+    }
+  });
+
+  function endPointer(e) {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size === 1) {
+      const p = [...pointers.values()][0];
+      pan = { sx: p.cx, sy: p.cy, vx: graphView.x, vy: graphView.y };
+      pinch = null;
+    } else if (pointers.size === 0) {
+      pan = null;
+      pinch = null;
+      graphSvg.classList.remove("panning");
+    }
+  }
+
+  graphSvg.addEventListener("pointerup", endPointer);
+  graphSvg.addEventListener("pointercancel", endPointer);
+
+  graphSvg.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const p = svgPoint(e.clientX, e.clientY);
+      zoomView(p.x, p.y, e.deltaY < 0 ? 1.1 : 1 / 1.1);
+    },
+    { passive: false }
+  );
+
+  async function openGraph() {
+    if (!currentGalaxyPath) return;
+    try {
+      const data = await api("GET", "/api/graph");
+      graphOverlay.classList.remove("hidden");
+      buildAstroView(data);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function closeGraph() {
+    graphOverlay.classList.add("hidden");
+    cancelAnimationFrame(graphAnim);
+    graphAnim = null;
+    graphSvg.innerHTML = "";
+    graphView = null;
+    graphHome = null;
+    sim = null;
+    graphBodies = [];
+    pan = null;
+    pinch = null;
+    pointers.clear();
+    graphSvg.classList.remove("panning");
+  }
+
+  function buildAstroView(data) {
+    cancelAnimationFrame(graphAnim);
+    graphAnim = null;
+    graphSvg.innerHTML = "";
+    const w = graphSvg.clientWidth || 800;
+    const h = graphSvg.clientHeight || 500;
+
+    const ns = "http://www.w3.org/2000/svg";
+    const viewport = document.createElementNS(ns, "g");
+    graphSvg.appendChild(viewport);
+    graphView = { g: viewport, x: w / 2, y: h / 2, k: 1 };
+
+    const byId = {};
+    data.nodes.forEach((n) => {
+      byId[n.id] = n;
+      n._children = [];
+      n._orbits = [];
+    });
+    data.links.forEach((l) => {
+      if (l.source !== l.target && byId[l.source] && byId[l.target]) {
+        byId[l.source]._children.push(byId[l.target]);
+      }
+    });
+    const root = byId["."];
+    if (!root) {
+      graphSvg.innerHTML =
+        '<text x="50%" y="50%" fill="#888" font-size="14" text-anchor="middle">galaxy is empty</text>';
+      return;
+    }
+    computeRadii(root);
+    assignOrbits(root);
+    graphView.k = clampZoom(Math.min(1.5, Math.min(w, h) / (2 * (root.sysExtent + 20))));
+    graphHome = { x: w / 2, y: h / 2, k: graphView.k };
+
+    const curDir =
+      currentFile && currentFile.includes("/")
+        ? currentFile.slice(0, currentFile.lastIndexOf("/"))
+        : "";
+    graphBodies = [];
+
+    function isCurrentNode(node) {
+      if (node.type === "planet") return node.path === currentFile;
+      return node.path === "." ? curDir === "" : node.path === curDir;
+    }
+
+    function labelFor(name, r) {
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("class", "graph-label");
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dy", r + 12);
+      text.setAttribute("fill", "#888");
+      text.setAttribute("font-size", "10");
+      text.textContent = name;
+      return text;
+    }
+
+    function buildSystem(parentG, node, parentBody) {
+      const starG = document.createElementNS(ns, "g");
+      starG.setAttribute("class", "graph-node star-node");
+      starG.style.cursor = "pointer";
+      const isCur = isCurrentNode(node);
+      const halo = document.createElementNS(ns, "circle");
+      halo.setAttribute("r", node.r * 2.6);
+      halo.setAttribute("fill", starColor(node.path));
+      halo.setAttribute("opacity", "0.16");
+      const body = document.createElementNS(ns, "circle");
+      body.setAttribute("r", node.r);
+      body.setAttribute("fill", starColor(node.path));
+      body.setAttribute("stroke", isCur ? "#fff" : "rgba(255,255,255,0.35)");
+      body.setAttribute("stroke-width", isCur ? 1.5 : 0.75);
+      starG.append(halo, body, labelFor(node.name, node.r));
+      starG.addEventListener("click", () => {
+        closeGraph();
+        openGraphNode(node);
+      });
+      parentG.appendChild(starG);
+      node._orbits.forEach((orb) => {
+        const orbitG = document.createElementNS(ns, "g");
+        orbitG.setAttribute(
+          "transform",
+          `rotate(${((orb.phi * 180) / Math.PI).toFixed(2)})`
+        );
+        const path = document.createElementNS(ns, "ellipse");
+        path.setAttribute("class", "orbit-path");
+        path.setAttribute("cx", -orb.a * orb.e);
+        path.setAttribute("cy", "0");
+        path.setAttribute("rx", orb.a);
+        path.setAttribute("ry", orb.a * Math.sqrt(1 - orb.e * orb.e));
+        const bodyG = document.createElementNS(ns, "g");
+        bodyG.setAttribute("class", "orbit-body");
+        const common = {
+          M: phaseFor(orb.child.path + ":m"),
+          omega: KEPLER_K / Math.pow(orb.a, 1.5),
+          a: orb.a,
+          e: orb.e,
+          sqrt1e2: Math.sqrt(1 - orb.e * orb.e),
+          parent: parentBody,
+        };
+        if (orb.child.type === "planet") {
+          bodyG.classList.add("graph-node");
+          bodyG.style.cursor = "pointer";
+          const isC = isCurrentNode(orb.child);
+          const pc = document.createElementNS(ns, "circle");
+          pc.setAttribute("r", orb.child.r);
+          pc.setAttribute("fill", planetColor(orb.child.path));
+          pc.setAttribute("stroke", isC ? "#fff" : "rgba(0,0,0,0.5)");
+          pc.setAttribute("stroke-width", isC ? 1.5 : 0.75);
+          bodyG.append(pc, labelFor(orb.child.name, orb.child.r));
+          bodyG.addEventListener("click", () => {
+            closeGraph();
+            openFile(orb.child.path);
+          });
+          graphBodies.push({ el: bodyG, isStar: false, ...common });
+        } else {
+          const sub = { el: bodyG, isStar: true, ...common };
+          graphBodies.push(sub);
+          buildSystem(bodyG, orb.child, sub);
+        }
+        orbitG.append(path, bodyG);
+        starG.appendChild(orbitG);
+      });
+    }
+
+    buildSystem(viewport, root, null);
+    applyView();
+
+    sim = {
+      bodies: graphBodies,
+      running: true,
+      userPaused: false,
+      idleFrames: 0,
+      w,
+      h,
+      last: performance.now(),
+    };
+    graphPauseBtn.textContent = "⏸";
+    graphAnim = requestAnimationFrame(tick);
+  }
+
+  function wakeSim() {
+    if (!sim || sim.userPaused || sim.running) return;
+    sim.running = true;
+    sim.idleFrames = 0;
+    sim.last = performance.now();
+    graphPauseBtn.textContent = "⏸";
+    graphAnim = requestAnimationFrame(tick);
+  }
+
+  function tick() {
+    graphAnim = requestAnimationFrame(tick);
+    if (!sim || !sim.running) return;
+    const now = performance.now();
+    let dt = (now - sim.last) / 1000;
+    sim.last = now;
+    if (dt > 0.1) dt = 0.1;
+    const k = graphView.k;
+    const w = sim.w;
+    const h = sim.h;
+    let moved = false;
+    for (const b of sim.bodies) {
+      b.M += b.omega * dt;
+      const cx = b.parent ? b.parent._sx : graphView.x;
+      const cy = b.parent ? b.parent._sy : graphView.y;
+      const screenA = b.a * k;
+      const margin = screenA * (1 + b.e) + 1;
+      const offscreen =
+        screenA >= MIN_SCREEN_A &&
+        (cx + margin < 0 || cx - margin > w || cy + margin < 0 || cy - margin > h);
+      if (offscreen && !b.isStar) continue;
+      const E = solveKepler(b.M % TWO_PI, b.e);
+      const cosE = Math.cos(E);
+      const sinE = Math.sin(E);
+      const x = b.a * (cosE - b.e);
+      const y = b.a * b.sqrt1e2 * sinE;
+      b._sx = cx + x * k;
+      b._sy = cy + y * k;
+      if (screenA >= MIN_SCREEN_A && !offscreen) {
+        moved = true;
+        const t = x.toFixed(2) + "," + y.toFixed(2);
+        if (t !== b._t) {
+          b._t = t;
+          b.el.setAttribute("transform", "translate(" + t + ")");
+        }
+      }
+    }
+    if (!moved) {
+      if (++sim.idleFrames >= 20 && !sim.userPaused) {
+        cancelAnimationFrame(graphAnim);
+        graphAnim = null;
+        sim.running = false;
+      }
+    } else {
+      sim.idleFrames = 0;
+    }
+  }
+
+  function openGraphNode(node) {
+    const list = node.path === "." ? tree : (findEntry(tree, node.path) || {}).children || [];
+    expandInSidebar(node.path === "." ? "" : node.path);
+    const first = firstFileInTree(list);
+    if (first) openFile(first);
+  }
+
+  function findEntry(list, path) {
+    for (const e of list) {
+      if (e.path === path) return e;
+      if (e.type === "star") {
+        const r = findEntry(e.children || [], path);
+        if (r) return r;
+      }
+    }
+    return null;
+  }
+
+  function firstFileInTree(list) {
+    for (const e of list) {
+      if (e.type === "planet") return e.path;
+      const f = firstFileInTree(e.children || []);
+      if (f) return f;
+    }
+    return null;
+  }
+
+  function expandInSidebar(path) {
+    document.querySelectorAll(".tree li").forEach((li) => {
+      if (
+        li.dataset.path &&
+        path &&
+        li.dataset.path !== path &&
+        path.startsWith(li.dataset.path + "/") &&
+        li.classList.contains("star") &&
+        !li.classList.contains("open")
+      ) {
+        li.classList.add("open");
+        openState.set(li.dataset.path, true);
+        const t = li.querySelector(".twist");
+        if (t) t.textContent = "▾";
+        const child = li.querySelector(":scope > ul");
+        if (child) child.style.display = "";
+      }
+    });
+  }
+
+  // ---------- Search ----------
+
+  let searchTimer = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 300);
+  });
+
+  async function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) {
+      searchResults.classList.add("hidden");
+      return;
+    }
+    try {
+      const data = await api("GET", "/api/search?q=" + encodeURIComponent(q));
+      searchResults.innerHTML = "";
+      if (!data.results.length) {
+        searchResults.innerHTML = '<div class="result-item">no matches</div>';
+      } else {
+        data.results.forEach((r) => {
+          const div = document.createElement("div");
+          div.className = "result-item";
+          div.innerHTML =
+            `<div class="r-title">${escapeHtml(r.title)}</div>` +
+            (r.snippet
+              ? `<div class="r-snippet">${escapeHtml(r.snippet)}…</div>`
+              : "");
+          div.addEventListener("click", () => {
+            searchResults.classList.add("hidden");
+            searchInput.value = "";
+            openFile(r.path);
+          });
+          searchResults.appendChild(div);
+        });
+      }
+      searchResults.classList.remove("hidden");
+    } catch (e) {
+      searchResults.classList.add("hidden");
+    }
+  }
+
+  // ---------- Galaxy switching ----------
+
+  $("#galaxy-btn").addEventListener("click", () => openGalaxyManager());
+  $("#settings-btn").addEventListener("click", () => openSettings());
+
+  async function setGalaxy(path) {
+    try {
+      if (dirty && currentFile) await saveFile();
+      const data = await api("PUT", "/api/galaxy", { path });
+      currentGalaxyPath = data.path;
+      $("#galaxy-label").textContent = data.path || "galaxies";
+      $("#galaxy-setup").classList.add("hidden");
+      currentFile = null;
+      editor.innerHTML = "";
+      lastSource = "";
+      dirty = false;
+      saveState.textContent = "";
+      await loadTree();
+      await openStartupNote();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // ---------- Settings (index note) ----------
+
+  async function openSettings() {
+    let indexNote = null;
+    try {
+      const data = await api("GET", "/api/index-note");
+      indexNote = data.path;
+    } catch (e) {}
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = "Index note — opens every time the app starts";
+    const row = document.createElement("div");
+    row.className = "import-row";
+    const input = document.createElement("input");
+    input.placeholder = "none — first note opens";
+    input.value = indexNote || "";
+    const pickBtn = document.createElement("button");
+    pickBtn.type = "button";
+    pickBtn.textContent = "Pick…";
+    pickBtn.addEventListener("click", async () => {
+      const picked = await pickIndexNote();
+      if (picked) input.value = picked;
+    });
+    row.append(input, pickBtn);
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Clear";
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+    });
+    const hint = document.createElement("div");
+    hint.className = "field-label";
+    hint.textContent = "Like a home page for your galaxy.";
+    const body = document.createElement("div");
+    body.append(label, row, clearBtn, hint);
+    const ok = await showModal("Settings", body, "Save");
+    if (!ok) return;
+    try {
+      await api("PUT", "/api/index-note", { path: input.value.trim() });
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function pickIndexNote() {
+    return new Promise((resolve) => {
+      const files = collectFiles(tree);
+      const body = document.createElement("div");
+      const ul = document.createElement("ul");
+      ul.className = "dir-list";
+      if (!files.length) {
+        const li = document.createElement("li");
+        li.textContent = "(no notes)";
+        li.style.color = "var(--dim)";
+        ul.appendChild(li);
+      }
+      files.forEach((f) => {
+        const li = document.createElement("li");
+        li.textContent = f;
+        li.addEventListener("click", () => closeModal(f));
+        ul.appendChild(li);
+      });
+      body.appendChild(ul);
+      showModal("Pick index note", body, "Cancel").then((ok) => {
+        resolve(typeof ok === "string" ? ok : null);
+      });
+    });
+  }
+
+  async function openStartupNote() {
+    try {
+      const data = await api("GET", "/api/index-note");
+      if (data.path) {
+        await openFile(data.path);
+        return;
+      }
+    } catch (e) {}
+    const files = collectFiles(tree);
+    if (files.length) await openFile(files[0]);
+  }
+
+  // ---------- Galaxy manager ----------
+
+  function showGalaxySetup() {
+    $("#galaxy-setup").classList.remove("hidden");
+  }
+
+  $("#setup-create-btn").addEventListener("click", createGalaxyFlow);
+  $("#setup-import-btn").addEventListener("click", importGalaxyFlow);
+
+  async function openGalaxyManager() {
+    try {
+      const data = await api("GET", "/api/galaxies");
+      const body = document.createElement("div");
+      const list = document.createElement("ul");
+      list.className = "galaxy-list";
+      let selected = null;
+      if (!data.galaxies.length) {
+        const li = document.createElement("li");
+        li.className = "galaxy-none";
+        li.textContent = "no galaxies yet";
+        list.appendChild(li);
+      } else {
+        data.galaxies.forEach((v) => {
+          const li = document.createElement("li");
+          li.className = "galaxy-item" + (v.current ? " current" : "");
+          li.textContent = v.name;
+          if (v.current) li.textContent += "  (current)";
+          li.addEventListener("click", () => {
+            list.querySelectorAll("li.galaxy-item").forEach((x) => x.classList.remove("sel"));
+            li.classList.add("sel");
+            selected = v.path;
+          });
+          list.appendChild(li);
+        });
+      }
+      const btns = document.createElement("div");
+      btns.className = "galaxy-actions";
+      const createB = document.createElement("button");
+      createB.type = "button";
+      createB.textContent = "+ Create";
+      createB.addEventListener("click", async () => {
+        closeModal(null);
+        await createGalaxyFlow();
+      });
+      const importB = document.createElement("button");
+      importB.type = "button";
+      importB.textContent = "Import";
+      importB.addEventListener("click", async () => {
+        closeModal(null);
+        await importGalaxyFlow();
+      });
+      btns.append(createB, importB);
+      body.append(list, btns);
+      const result = await showModal("Galaxies", body, "Open");
+      if (result === null || !selected) return;
+      await setGalaxy(selected);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function createGalaxyFlow() {
+    const name = await promptInput("New galaxy", "my-galaxy");
+    if (!name) return;
+    try {
+      const data = await api("POST", "/api/galaxies", { name });
+      await setGalaxy(data.path);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function importGalaxyFlow() {
+    const body = document.createElement("div");
+    const srcLabel = document.createElement("div");
+    srcLabel.className = "field-label";
+    srcLabel.textContent = "Source folder";
+    const srcInput = document.createElement("input");
+    srcInput.placeholder = "/path/to/galaxy or browse…";
+    const browseB = document.createElement("button");
+    browseB.type = "button";
+    browseB.textContent = "Browse…";
+    const row = document.createElement("div");
+    row.className = "import-row";
+    browseB.addEventListener("click", async () => {
+      const picked = await browseDirs("");
+      if (picked === null) return;
+      srcInput.value = picked;
+      if (!nameInput.value.trim()) nameInput.value = picked.split("/").pop();
+    });
+    row.append(srcInput, browseB);
+    const nameLabel = document.createElement("div");
+    nameLabel.className = "field-label";
+    nameLabel.textContent = "Galaxy name";
+    const nameInput = document.createElement("input");
+    nameInput.placeholder = "my-galaxy";
+    body.append(srcLabel, row, nameLabel, nameInput);
+    const ok = await showModal("Import galaxy", body, "Import");
+    if (!ok) return;
+    const source = srcInput.value.trim();
+    const name = nameInput.value.trim();
+    if (!source) {
+      alert("source folder required");
+      return;
+    }
+    try {
+      const data = await api("POST", "/api/galaxy/import", { source, name });
+      await setGalaxy(data.path);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function browseDirs(start) {
+    return new Promise((resolve) => {
+      let cur = start;
+      let settled = false;
+
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      }
+
+      function setBody(body) {
+        $("#modal-title").textContent = "Browse — choose source folder";
+        $("#modal-body").innerHTML = "";
+        $("#modal-body").appendChild(body);
+      }
+
+      async function render() {
+        if (settled) return;
+        let data;
+        try {
+          data = await api("GET", "/api/dirs?path=" + encodeURIComponent(cur));
+        } catch (e) {
+          closeModal(null);
+          finish(null);
+          return;
+        }
+        if (settled) return;
+        cur = data.current;
+        const body = document.createElement("div");
+        const ul = document.createElement("ul");
+        ul.className = "dir-list";
+        if (data.parent) {
+          const up = document.createElement("li");
+          up.className = "go-up";
+          up.textContent = "↑ ..";
+          up.addEventListener("click", () => {
+            cur = data.parent;
+            render();
+          });
+          ul.appendChild(up);
+        }
+        data.dirs.forEach((d) => {
+          const li = document.createElement("li");
+          li.textContent = "▣ " + d.split("/").pop();
+          li.addEventListener("click", () => {
+            cur = d;
+            render();
+          });
+          ul.appendChild(li);
+        });
+        if (!data.dirs.length) {
+          ul.appendChild(
+            Object.assign(document.createElement("li"), { textContent: "(no subfolders)" })
+          );
+        }
+        body.appendChild(ul);
+        setBody(body);
+      }
+
+      showModal("Browse — choose source folder", document.createElement("div"), "Select this").then(
+        (ok) => {
+          finish(ok === true ? cur : null);
+        }
+      );
+
+      render();
+    });
+  }
+
+  // ---------- Modal ----------
+
+  let modalResolve = null;
+  let modalStack = [];
+
+  function showModal(title, bodyEl, okLabel) {
+    if (modalResolve) {
+      modalStack.push({
+        resolve: modalResolve,
+        title: $("#modal-title").textContent,
+        okLabel: $("#modal-ok").textContent,
+        bodyEl: $("#modal-body").firstElementChild,
+      });
+    }
+    $("#modal-title").textContent = title;
+    $("#modal-body").innerHTML = "";
+    $("#modal-body").appendChild(bodyEl);
+    $("#modal-ok").textContent = okLabel || "OK";
+    $("#modal-overlay").classList.remove("hidden");
+    const firstInput = bodyEl.querySelector("input");
+    if (firstInput) {
+      firstInput.focus();
+      firstInput.select();
+    }
+    return new Promise((resolve) => {
+      modalResolve = resolve;
+    });
+  }
+
+  function closeModal(value) {
+    const current = modalResolve;
+    modalResolve = null;
+    if (current) current(value);
+    const prev = modalStack.pop();
+    if (prev) {
+      $("#modal-title").textContent = prev.title;
+      $("#modal-body").innerHTML = "";
+      $("#modal-body").appendChild(prev.bodyEl);
+      $("#modal-ok").textContent = prev.okLabel;
+      $("#modal-overlay").classList.remove("hidden");
+      modalResolve = prev.resolve;
+    } else {
+      $("#modal-overlay").classList.add("hidden");
+    }
+  }
+
+  $("#modal-cancel").addEventListener("click", () => closeModal(null));
+  $("#modal-ok").addEventListener("click", () => closeModal(true));
+  $("#modal-overlay").addEventListener("click", (e) => {
+    if (e.target === $("#modal-overlay")) closeModal(null);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (!$("#modal-overlay").classList.contains("hidden")) closeModal(null);
+      if (!graphOverlay.classList.contains("hidden")) closeGraph();
+    }
+  });
+
+  function promptInput(title, value) {
+    const input = document.createElement("input");
+    input.value = value;
+    input.placeholder = title;
+    const body = document.createElement("div");
+    body.appendChild(input);
+    return showModal(title, body, "OK").then((ok) => (ok ? input.value : null));
+  }
+
+  function confirmBox(title, message) {
+    const p = document.createElement("p");
+    p.textContent = message;
+    p.style.whiteSpace = "pre-line";
+    const body = document.createElement("div");
+    body.appendChild(p);
+    return showModal(title, body, "Delete").then((ok) => ok === true);
+  }
+
+  // ---------- Editor events ----------
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      clearTimeout(saveTimer);
+      saveFile();
+    }
+  });
+
+  // ---------- Utils ----------
+
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // ---------- Boot ----------
+
+  async function boot() {
+    let galaxy = null;
+    try {
+      galaxy = await api("GET", "/api/galaxy");
+    } catch (e) {}
+    if (galaxy && galaxy.path) {
+      currentGalaxyPath = galaxy.path;
+      $("#galaxy-label").textContent = galaxy.path;
+      await loadTree();
+      await openStartupNote();
+    } else {
+      showGalaxySetup();
+    }
+  }
+
+  boot();
+})();

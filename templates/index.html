@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Astro</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <button id="menu-btn" title="Files" aria-label="Files">☰</button>
+    <span class="brand">ASTRO</span>
+    <button id="graph-btn" title="Galaxy graph" aria-label="Galaxy graph">◎</button>
+    <button id="galaxy-btn" title="Choose galaxy">◈ <span id="galaxy-label">galaxies</span></button>
+    <button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
+    <input id="search-input" type="text" placeholder="Search planets…" autocomplete="off">
+    <span id="save-state" class="save-state"></span>
+  </header>
+
+  <div id="backdrop"></div>
+
+  <div id="layout">
+    <aside id="sidebar">
+      <div id="tree-toolbar">
+        <button id="new-planet-btn" title="New planet">+ Planet</button>
+        <button id="new-star-btn" title="New star">+ Star</button>
+        <button id="collapse-all-btn" title="Collapse all folders">▾▾</button>
+      </div>
+      <div id="tree-root"></div>
+    </aside>
+
+    <main id="workspace">
+      <div id="editor" contenteditable="true" spellcheck="false" autocorrect="off" autocapitalize="off" data-placeholder="Write markdown…"></div>
+    </main>
+  </div>
+
+  <div id="search-results" class="hidden"></div>
+
+  <div id="graph-overlay" class="hidden">
+    <div id="graph-head">
+      <span>ASTRONOMICAL VIEW</span>
+      <div id="graph-tools">
+        <button id="graph-pause" title="Pause / resume">⏸</button>
+        <button id="graph-zoom-out" title="Zoom out">−</button>
+        <button id="graph-zoom-in" title="Zoom in">+</button>
+        <button id="graph-reset" title="Reset view">⤢</button>
+        <button id="graph-close" title="Close">×</button>
+      </div>
+    </div>
+    <svg id="graph-svg"></svg>
+    <div id="graph-legend">
+      <span class="lg-star">star (folder)</span>
+      <span class="lg-planet">planet (note)</span>
+      <span class="lg-orbit">orbit</span>
+      <span class="lg-nav">drag to pan · scroll to zoom · click to open</span>
+    </div>
+  </div>
+
+  <div id="galaxy-setup" class="hidden">
+    <div class="galaxy-setup-box">
+      <h1>ASTRO</h1>
+      <p class="galaxy-setup-msg">No galaxy configured.</p>
+      <p class="galaxy-setup-sub">Create a new galaxy or import an existing one to begin.</p>
+      <div class="galaxy-setup-actions">
+        <button id="setup-create-btn" class="primary">Create galaxy</button>
+        <button id="setup-import-btn">Import galaxy</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <h3 id="modal-title">Galaxy</h3>
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel">Cancel</button>
+        <button id="modal-ok" class="primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/live.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

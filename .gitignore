@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+galaxy_path.json
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+logs/
+*.log
+.vscode/
+.idea/
