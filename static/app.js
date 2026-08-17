@@ -20,10 +20,18 @@
   let booted = false;
 
   const THEME_KEY = "astro-theme";
+  const SHIP_SPEED_KEY = "astro-ship-speed";
+  const SHIP_SPEED_DEFAULT = 0.2;
   const THEMES = [
     { id: "astro", label: "Astro (dark)" },
     { id: "dracula", label: "Dracula" },
   ];
+
+  function shipSpeed() {
+    const v = parseFloat(localStorage.getItem(SHIP_SPEED_KEY));
+    if (Number.isFinite(v)) return Math.min(1, Math.max(0.05, v));
+    return SHIP_SPEED_DEFAULT;
+  }
 
   function applyTheme(id) {
     const theme = id === "dracula" ? "dracula" : "astro";
@@ -1267,7 +1275,7 @@
         b,
         t: (seed % 100) / 100,
         dir: seed % 2 === 0 ? 1 : -1,
-        speed: 0.35 + ((seed >> 3) % 25) / 100,
+        speed: shipSpeed() * (0.75 + ((seed >> 3) % 25) / 100),
       });
     });
     applyView();
@@ -1510,6 +1518,24 @@
       themeSel.appendChild(opt);
     });
     themeSel.value = localStorage.getItem(THEME_KEY) || "astro";
+    const speedLabel = document.createElement("div");
+    speedLabel.className = "field-label";
+    speedLabel.textContent = "Ship speed";
+    const speedRange = document.createElement("input");
+    speedRange.type = "range";
+    speedRange.min = "0.05";
+    speedRange.max = "1";
+    speedRange.step = "0.05";
+    speedRange.value = String(shipSpeed());
+    const speedValue = document.createElement("span");
+    speedValue.className = "field-label";
+    speedValue.textContent = speedRange.value;
+    speedRange.addEventListener("input", () => {
+      speedValue.textContent = speedRange.value;
+    });
+    const speedRow = document.createElement("div");
+    speedRow.className = "import-row";
+    speedRow.append(speedRange, speedValue);
     let indexNote = null;
     try {
       const data = await api("GET", "/api/index-note");
@@ -1550,10 +1576,27 @@
       window.location.href = "/api/galaxy/download";
     });
     const body = document.createElement("div");
-    body.append(themeLabel, themeSel, label, row, clearBtn, hint, backupLabel, dlBtn);
+    body.append(
+      themeLabel,
+      themeSel,
+      speedLabel,
+      speedRow,
+      label,
+      row,
+      clearBtn,
+      hint,
+      backupLabel,
+      dlBtn
+    );
     const ok = await showModal("Settings", body, "Save");
     if (!ok) return;
     applyTheme(themeSel.value);
+    localStorage.setItem(SHIP_SPEED_KEY, speedRange.value);
+    if (sim) {
+      const ratio = shipSpeed() / (sim._speedBase || shipSpeed());
+      sim._speedBase = shipSpeed();
+      for (const s of sim.ships) s.speed *= ratio;
+    }
     try {
       await api("PUT", "/api/index-note", { path: input.value.trim() });
     } catch (err) {
