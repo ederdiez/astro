@@ -933,6 +933,9 @@
     );
     const mini = graphView.k < 0.35;
     graphSvg.classList.toggle("mini", mini);
+    if (graphShipsLayer) {
+      graphShipsLayer.setAttribute("visibility", mini ? "hidden" : "visible");
+    }
     wakeSim();
   }
 
@@ -1188,7 +1191,6 @@
           omega: KEPLER_K / Math.pow(orb.a, 1.5),
           a: orb.a,
           e: orb.e,
-          phi: orb.phi,
           sqrt1e2: Math.sqrt(1 - orb.e * orb.e),
           parent: parentBody,
         };
@@ -1361,23 +1363,21 @@
   }
 
   function bodyPos(b) {
-    const chain = [];
-    for (let x = b; x; x = x.parent) chain.push(x);
-    let rot = 0;
-    let x = 0;
-    let y = 0;
-    for (let i = chain.length - 1; i >= 0; i--) {
-      const c = chain[i];
-      rot += c.phi;
-      const E = solveKepler(c.M % TWO_PI, c.e);
-      const ox = c.a * (Math.cos(E) - c.e);
-      const oy = c.a * c.sqrt1e2 * Math.sin(E);
-      const cos = Math.cos(rot);
-      const sin = Math.sin(rot);
-      x += ox * cos - oy * sin;
-      y += ox * sin + oy * cos;
+    let cx;
+    let cy;
+    if (b.parent) {
+      const p = bodyPos(b.parent);
+      cx = p.x;
+      cy = p.y;
+    } else {
+      cx = graphView.x;
+      cy = graphView.y;
     }
-    return { x, y };
+    const E = solveKepler(b.M % TWO_PI, b.e);
+    return {
+      x: cx + b.a * (Math.cos(E) - b.e) * graphView.k,
+      y: cy + b.a * b.sqrt1e2 * Math.sin(E) * graphView.k,
+    };
   }
 
   function openGraphNode(node) {
