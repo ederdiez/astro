@@ -555,6 +555,21 @@
     );
   }
 
+  function brCount(node) {
+    if (node.nodeType !== Node.ELEMENT_NODE || node.tagName === "BR") return -1;
+    var brs = 0;
+    for (var c = 0; c < node.childNodes.length; c++) {
+      var ch = node.childNodes[c];
+      if (ch.nodeType === Node.TEXT_NODE) {
+        if (ch.data.length) return -1;
+      } else if (ch.nodeType === Node.ELEMENT_NODE) {
+        if (ch.tagName !== "BR") return -1;
+        brs++;
+      }
+    }
+    return brs;
+  }
+
   function liveSource(el) {
     var out = "";
     function walk(node) {
@@ -569,12 +584,17 @@
           out += "\n";
           continue;
         }
+        var brs = brCount(ch);
+        if (brs > 0) {
+          for (var b = 0; b < brs; b++) out += "\n";
+          continue;
+        }
         walk(ch);
         if (isLineLike(ch, el)) out += "\n";
       }
     }
     walk(el);
-    return out.replace(/^\n+|\n+$/g, "");
+    return out.replace(/\n$/, "");
   }
 
   function childCharLen(ch, el) {
