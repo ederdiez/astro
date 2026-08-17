@@ -7,6 +7,7 @@
   const searchInput = $("#search-input");
   const searchResults = $("#search-results");
   const saveState = $("#save-state");
+  const backBtn = $("#back-btn");
 
   let tree = [];
   let currentFile = null;
@@ -14,6 +15,7 @@
   let saveTimer = null;
   let currentGalaxyPath = "";
   const openState = new Map();
+  let booted = false;
 
   const THEME_KEY = "astro-theme";
   const THEMES = [
@@ -191,7 +193,9 @@
     });
   });
 
-  async function openFile(path) {
+  backBtn.addEventListener("click", () => history.back());
+
+  async function openFile(path, opts) {
     if (dirty && currentFile) await saveFile();
     const data = await api("GET", "/api/file?path=" + encodeURIComponent(path));
     currentFile = path;
@@ -206,7 +210,31 @@
     if (li) li.classList.add("selected");
     closeDrawer();
     editor.focus();
+    if (!opts || !opts.noHistory) {
+      if (!booted) {
+        history.replaceState({ note: path, depth: 0 }, "", "#" + encodeURIComponent(path));
+        booted = true;
+      } else {
+        const depth = history.state && typeof history.state.depth === "number" ? history.state.depth : 0;
+        history.pushState({ note: path, depth: depth + 1 }, "", "#" + encodeURIComponent(path));
+      }
+      updateBackBtn();
+    }
   }
+
+  function updateBackBtn() {
+    const d = history.state && typeof history.state.depth === "number" ? history.state.depth : 0;
+    backBtn.disabled = d <= 0;
+  }
+
+  window.addEventListener("popstate", () => {
+    updateBackBtn();
+    const st = history.state;
+    const path = st && st.note;
+    if (path && path !== currentFile) {
+      openFile(path, { noHistory: true }).catch(() => {});
+    }
+  });
 
   async function saveFile() {
     if (!currentFile) return;
@@ -1060,6 +1088,9 @@
       lastSource = "";
       dirty = false;
       saveState.textContent = "";
+      booted = false;
+      history.replaceState({ depth: 0 }, "", location.pathname);
+      updateBackBtn();
       await loadTree();
       await openStartupNote();
     } catch (err) {
@@ -1644,7 +1675,12 @@
       currentGalaxyPath = galaxy.path;
       $("#galaxy-label").textContent = galaxy.path;
       await loadTree();
-      await openStartupNote();
+      const hash = location.hash ? decodeURIComponent(location.hash.slice(1)) : "";
+      if (hash && collectFiles(tree).includes(hash)) {
+        await openFile(hash);
+      } else {
+        await openStartupNote();
+      }
     } else {
       showGalaxySetup();
     }
