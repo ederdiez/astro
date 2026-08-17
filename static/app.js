@@ -298,10 +298,12 @@
       suppressSel = true;
     }
     lastSource = source;
+    if (caret >= 0) requestAnimationFrame(() => maybeShowAutocomplete(source, caret));
   }
 
   editor.addEventListener("input", (e) => {
     if (e.isComposing) return;
+    lastEditorAction = "input";
     const prev = lastSource;
     const offset = LiveEditor.caretOffset(editor);
     const md = LiveEditor.source(editor);
@@ -318,6 +320,28 @@
   });
 
   editor.addEventListener("keydown", (e) => {
+    if (ac && ac.items.length) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        acMove(1);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        acMove(-1);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        acSelect(ac.items[ac.index]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeAc();
+        return;
+      }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       const offset = LiveEditor.caretOffset(editor);
@@ -364,6 +388,7 @@
     selPending = true;
     requestAnimationFrame(() => {
       selPending = false;
+      lastEditorAction = "caret";
       const offset = LiveEditor.caretOffset(editor);
       const md = LiveEditor.source(editor);
       if (md !== lastSource) return;
@@ -375,13 +400,7 @@
     const wl = e.target.closest(".lp-wikilink");
     if (wl) {
       e.preventDefault();
-      const name = wl.dataset.note || "";
-      const files = collectFiles(tree);
-      const file = files.includes(name)
-        ? name
-        : files.includes(name + ".md")
-        ? name + ".md"
-        : null;
+      const file = LiveEditor.resolve(wl.dataset.note || "", currentFile);
       if (file) openFile(file);
       return;
     }
@@ -1398,6 +1417,192 @@
       saveFile();
     }
   });
+
+  // ---------- Wikilink autocomplete ----------
+
+  const AC_LIMIT = 12;
+
+  let ac = null;
+  let lastEditorAction = "caret";
+
+  function noteBase(path) {
+    const t = path.slice(0, -3);
+    return t.slice(t.lastIndexOf("/") + 1);
+  }
+
+  function noteDir(path) {
+    const i = path.lastIndexOf("/");
+    return i === -1 ? "" : path.slice(0, i);
+  }
+
+  function acMatch(query, notes) {
+    const q = query.toLowerCase();
+    const scored = [];
+    for (const p of notes) {
+      const t = noteBase(p).toLowerCase();
+      const pl = p.toLowerCase();
+      let s = -1;
+      if (t === q) s = 5;
+      else if (t.startsWith(q)) s = 4;
+      else if (pl.startsWith(q)) s = 3;
+      else if (t.includes(q)) s = 2;
+      else if (pl.includes(q)) s = 1;
+      if (s < 0) continue;
+      scored.push({ p, s });
+    }
+    scored.sort((a, b) => b.s - a.s || a.p.localeCompare(b.p));
+    return scored.slice(0, AC_LIMIT).map((x) => x.p);
+  }
+
+  function linkFor(path, notes) {
+    const base = noteBase(path);
+    const same = notes.filter((p) => noteBase(p) === base).length;
+    if (same <= 1) return base;
+    const parts = path.slice(0, -3).split("/");
+    for (let i = parts.length - 2; i >= 0; i--) {
+      const cand = parts.slice(i).join("/");
+      const count = notes.filter((p) => {
+        const t = p.slice(0, -3);
+        return t === cand || t.endsWith("/" + cand);
+      }).length;
+      if (count === 1) return cand;
+    }
+    return path.slice(0, -3);
+  }
+
+  function caretRect() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const r = sel.getRangeAt(0);
+    if (!r.collapsed || !editor.contains(r.startContainer)) return null;
+    const rect = r.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) return null;
+    return rect;
+  }
+
+  function maybeShowAutocomplete(md, caret) {
+    if (caret < 0 || lastEditorAction !== "input") {
+      closeAc();
+      return;
+    }
+    const lineStart = md.lastIndexOf("\n", caret - 1) + 1;
+    const before = md.slice(lineStart, caret);
+    const m = /\[\[([^\[\]\n]*)$/.exec(before);
+    if (!m) {
+      closeAc();
+      return;
+    }
+    const open = lineStart + m.index;
+    const raw = m[1];
+    const pipe = raw.indexOf("|");
+    const query = (pipe === -1 ? raw : raw.slice(0, pipe)).trim();
+    const alias = pipe === -1 ? "" : raw.slice(pipe + 1);
+    const notes = collectFiles(tree);
+    const matches = acMatch(query, notes);
+    const items = matches.map((p) => ({
+      kind: "note",
+      path: p,
+      label: noteBase(p),
+      sub: noteDir(p),
+      link: linkFor(p, notes),
+    }));
+    const exact =
+      notes.some((p) => noteBase(p) === query) || notes.includes(query + ".md");
+    if (query && !exact) {
+      items.push({
+        kind: "create",
+        path: query + ".md",
+        label: query,
+        sub: "create note",
+        link: query,
+      });
+    }
+    if (!items.length) {
+      closeAc();
+      return;
+    }
+    showAc(items, open, caret, alias);
+  }
+
+  function showAc(items, open, end, alias) {
+    if (ac) ac.popup.remove();
+    const popup = document.createElement("div");
+    popup.className = "ac-popup";
+    popup.style.display = "none";
+    const listEl = document.createElement("div");
+    listEl.className = "ac-list";
+    items.forEach((it, idx) => {
+      const row = document.createElement("div");
+      row.className = "ac-item" + (idx === 0 ? " sel" : "");
+      const label = document.createElement("span");
+      label.className = "ac-label";
+      label.textContent = it.label;
+      const sub = document.createElement("span");
+      sub.className = "ac-sub";
+      sub.textContent = it.sub;
+      row.append(label, sub);
+      row.addEventListener("mousedown", (e) => e.preventDefault());
+      row.addEventListener("click", () => acSelect(it));
+      listEl.appendChild(row);
+    });
+    popup.appendChild(listEl);
+    document.body.appendChild(popup);
+    ac = { popup, items, index: 0, open, end, alias };
+    requestAnimationFrame(() => {
+      if (!ac) return;
+      const rect = caretRect();
+      if (!rect) {
+        closeAc();
+        return;
+      }
+      popup.style.display = "";
+      const pr = popup.getBoundingClientRect();
+      let left = rect.left;
+      if (left + pr.width > window.innerWidth - 8) {
+        left = Math.max(8, window.innerWidth - pr.width - 8);
+      }
+      const below = rect.bottom + 6;
+      const top =
+        below + pr.height <= window.innerHeight - 8
+          ? below
+          : Math.max(8, rect.top - pr.height - 6);
+      popup.style.left = left + "px";
+      popup.style.top = top + "px";
+    });
+  }
+
+  function acMove(delta) {
+    if (!ac || !ac.items.length) return;
+    ac.index = (ac.index + delta + ac.items.length) % ac.items.length;
+    const rows = ac.popup.querySelectorAll(".ac-item");
+    rows.forEach((r, i) => r.classList.toggle("sel", i === ac.index));
+    const sel = rows[ac.index];
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+
+  function acSelect(item) {
+    if (!ac) return;
+    const md = LiveEditor.source(editor);
+    const insert = "[[" + item.link + (ac.alias ? "|" + ac.alias : "") + "]]";
+    undoStack.push(lastSource);
+    liveApply(md.slice(0, ac.open) + insert + md.slice(ac.end), ac.open + insert.length);
+    dirty = true;
+    saveState.textContent = "unsaved";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveFile, 800);
+    closeAc();
+    if (item.kind === "create") {
+      api("POST", "/api/file", { path: item.path }).then(loadTree).catch(() => {});
+    }
+  }
+
+  function closeAc() {
+    if (!ac) return;
+    ac.popup.remove();
+    ac = null;
+  }
+
+  editor.addEventListener("blur", closeAc);
 
   // ---------- Utils ----------
 

@@ -1,17 +1,42 @@
 (function () {
   "use strict";
 
-  var notes = new Set();
+  var paths = [];
+  var byBase = Object.create(null);
 
   function setNotes(files) {
-    notes = new Set();
-    files.forEach(function (f) {
-      notes.add(f);
-      if (f.endsWith(".md")) {
-        notes.add(f.slice(0, -3));
-        notes.add(f.split("/").pop().slice(0, -3));
+    paths = files.slice();
+    byBase = Object.create(null);
+    for (var i = 0; i < paths.length; i++) {
+      var f = paths[i];
+      if (!f.endsWith(".md")) continue;
+      var base = f.slice(0, -3);
+      var name = base.slice(base.lastIndexOf("/") + 1);
+      (byBase[name] = byBase[name] || []).push(f);
+    }
+  }
+
+  function resolveNote(name, from) {
+    var target = String(name || "").trim();
+    if (!target) return null;
+    if (target.endsWith(".md")) target = target.slice(0, -3);
+    var isBare = target.indexOf("/") === -1;
+    if (!isBare && paths.indexOf(target + ".md") !== -1) return target + ".md";
+    var list = byBase[target];
+    if (!list || !list.length) return null;
+    if (list.length === 1) return list[0];
+    if (from) {
+      var i = from.lastIndexOf("/");
+      var dir = i === -1 ? "" : from.slice(0, i);
+      for (var j = 0; j < list.length; j++) {
+        if (dir) {
+          if (list[j].indexOf(dir + "/") === 0) return list[j];
+        } else if (list[j].indexOf("/") === -1) {
+          return list[j];
+        }
       }
-    });
+    }
+    return list[0];
   }
 
   function esc(s) {
@@ -89,16 +114,20 @@
         var a = abs(i);
         var b = abs(i + wl[0].length);
         var sh = shown(a, b);
-        var target = wl[1].trim();
-        var dead = !(notes.has(target) || notes.has(target + ".md"));
+        var raw = wl[1].trim();
+        var pipe = raw.indexOf("|");
+        var target = pipe === -1 ? raw : raw.slice(0, pipe).trim();
+        var display = (pipe === -1 ? raw : raw.slice(pipe + 1).trim()) || target;
+        var dead = !resolveNote(target);
         out +=
           '<span class="lp-wikilink' +
           (dead ? " lp-dead" : "") +
+          (sh ? " lp-edit" : "") +
           '" data-note="' +
           esc(target) +
           '">' +
           hid("[[", sh) +
-          esc(wl[1]) +
+          esc(display) +
           hid("]]", sh) +
           "</span>";
         i += wl[0].length;
@@ -677,5 +706,6 @@
     caretOffset: caretOffset,
     setCaret: setCaret,
     setNotes: setNotes,
+    resolve: resolveNote,
   };
 })();
