@@ -451,6 +451,31 @@ def api_delete():
     return jsonify({"ok": True})
 
 
+def _resolve_wikilink(target, from_path, planets, by_base):
+    target = (target or "").strip()
+    if not target:
+        return None
+    if target.endswith(".md"):
+        target = target[:-3]
+    if "/" in target:
+        return target + ".md" if target + ".md" in planets else None
+    lst = by_base.get(target)
+    if not lst:
+        return None
+    if len(lst) == 1:
+        return lst[0]
+    if from_path:
+        i = from_path.rfind("/")
+        d = from_path[:i] if i != -1 else ""
+        for p in lst:
+            if d:
+                if p.startswith(d + "/"):
+                    return p
+            elif "/" not in p:
+                return p
+    return lst[0]
+
+
 @app.get("/api/graph")
 def api_graph():
     root = galaxy_path()
@@ -487,6 +512,31 @@ def api_graph():
                 {"id": planet_id, "path": planet_id, "name": md[:-3], "type": "planet", "size": size}
             )
             links.append({"source": rel, "target": planet_id, "type": "planet"})
+    planets = {n["id"]: n for n in nodes if n["type"] == "planet"}
+    by_base = {}
+    for pid in planets:
+        base = pid[:-3] if pid.endswith(".md") else pid
+        name = base.rsplit("/", 1)[-1]
+        by_base.setdefault(name, []).append(pid)
+    seen = set()
+    for pid in planets:
+        try:
+            with open(os.path.join(root, pid), "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except OSError:
+            continue
+        for m in re.finditer(r"\[\[([^\]\n]*?)\]\]", content):
+            raw = m.group(1).strip()
+            pipe = raw.find("|")
+            target = raw[:pipe].strip() if pipe != -1 else raw
+            res = _resolve_wikilink(target, pid, planets, by_base)
+            if not res or res == pid:
+                continue
+            key = (pid, res)
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append({"source": pid, "target": res, "type": "wikilink"})
     return jsonify({"nodes": nodes, "links": links})
 
 

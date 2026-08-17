@@ -757,6 +757,7 @@
   let graphHome = null;
   let sim = null;
   let graphBodies = [];
+  let graphShipsLayer = null;
 
   const STAR_COLORS = [
     "#aabfff",
@@ -930,7 +931,11 @@
       "transform",
       `translate(${graphView.x},${graphView.y}) scale(${graphView.k})`
     );
-    graphSvg.classList.toggle("mini", graphView.k < 0.35);
+    const mini = graphView.k < 0.35;
+    graphSvg.classList.toggle("mini", mini);
+    if (graphShipsLayer) {
+      graphShipsLayer.setAttribute("visibility", mini ? "hidden" : "visible");
+    }
     wakeSim();
   }
 
@@ -1080,6 +1085,7 @@
     graphHome = null;
     sim = null;
     graphBodies = [];
+    graphShipsLayer = null;
     pan = null;
     pinch = null;
     dragActive = false;
@@ -1107,6 +1113,7 @@
       n._orbits = [];
     });
     data.links.forEach((l) => {
+      if (l.type === "wikilink") return;
       if (l.source !== l.target && byId[l.source] && byId[l.target]) {
         byId[l.source]._children.push(byId[l.target]);
       }
@@ -1179,6 +1186,7 @@
         const bodyG = document.createElementNS(ns, "g");
         bodyG.setAttribute("class", "orbit-body");
         const common = {
+          path: orb.child.path,
           M: phaseFor(orb.child.path + ":m"),
           omega: KEPLER_K / Math.pow(orb.a, 1.5),
           a: orb.a,
@@ -1213,10 +1221,60 @@
     }
 
     buildSystem(viewport, root, null);
+
+    const linkColor = (
+      getComputedStyle(document.documentElement).getPropertyValue("--link").trim() ||
+      "#9ab3ff"
+    );
+    graphShipsLayer = document.createElementNS(ns, "g");
+    graphShipsLayer.setAttribute("class", "graph-ships");
+    graphShipsLayer.style.pointerEvents = "none";
+    viewport.appendChild(graphShipsLayer);
+    const bodyByPath = new Map();
+    graphBodies.forEach((b) => {
+      if (b.path) bodyByPath.set(b.path, b);
+    });
+    const ships = [];
+    data.links.forEach((l) => {
+      if (l.type !== "wikilink") return;
+      const a = bodyByPath.get(l.source);
+      const b = bodyByPath.get(l.target);
+      if (!a || !b) return;
+      const seed = hashStr(l.source + "->" + l.target);
+      const g = document.createElementNS(ns, "g");
+      g.setAttribute("class", "graph-ship");
+      g.style.pointerEvents = "none";
+      const trail = document.createElementNS(ns, "path");
+      trail.setAttribute("d", "M-16,0 L-3,0");
+      trail.setAttribute("fill", "none");
+      trail.setAttribute("stroke", linkColor);
+      trail.setAttribute("stroke-width", "1.1");
+      trail.setAttribute("opacity", "0.35");
+      const glow = document.createElementNS(ns, "circle");
+      glow.setAttribute("cx", "0");
+      glow.setAttribute("cy", "0");
+      glow.setAttribute("r", "5");
+      glow.setAttribute("fill", linkColor);
+      glow.setAttribute("opacity", "0.18");
+      const hull = document.createElementNS(ns, "path");
+      hull.setAttribute("d", "M-3,0 L3,-2.6 L6.5,0 L3,2.6 Z");
+      hull.setAttribute("fill", linkColor);
+      g.append(trail, glow, hull);
+      graphShipsLayer.appendChild(g);
+      ships.push({
+        g,
+        a,
+        b,
+        t: (seed % 100) / 100,
+        dir: seed % 2 === 0 ? 1 : -1,
+        speed: 0.35 + ((seed >> 3) % 25) / 100,
+      });
+    });
     applyView();
 
     sim = {
       bodies: graphBodies,
+      ships,
       running: true,
       userPaused: false,
       idleFrames: 0,
@@ -1274,6 +1332,25 @@
         }
       }
     }
+    for (const s of sim.ships) {
+      s.t += s.dir * s.speed * dt;
+      if (s.t > 1) {
+        s.t = 1;
+        s.dir = -1;
+      } else if (s.t < 0) {
+        s.t = 0;
+        s.dir = 1;
+      }
+      const A = bodyPos(s.a);
+      const B = bodyPos(s.b);
+      const x = A.x + (B.x - A.x) * s.t;
+      const y = A.y + (B.y - A.y) * s.t;
+      const ang = (Math.atan2(B.y - A.y, B.x - A.x) * 180) / Math.PI;
+      s.g.setAttribute(
+        "transform",
+        `translate(${x.toFixed(2)},${y.toFixed(2)}) rotate(${ang.toFixed(2)})`
+      );
+    }
     if (!moved) {
       if (++sim.idleFrames >= 20 && !sim.userPaused) {
         cancelAnimationFrame(graphAnim);
@@ -1283,6 +1360,24 @@
     } else {
       sim.idleFrames = 0;
     }
+  }
+
+  function bodyPos(b) {
+    let cx;
+    let cy;
+    if (b.parent) {
+      const p = bodyPos(b.parent);
+      cx = p.x;
+      cy = p.y;
+    } else {
+      cx = graphView.x;
+      cy = graphView.y;
+    }
+    const E = solveKepler(b.M % TWO_PI, b.e);
+    return {
+      x: cx + b.a * (Math.cos(E) - b.e) * graphView.k,
+      y: cy + b.a * b.sqrt1e2 * Math.sin(E) * graphView.k,
+    };
   }
 
   function openGraphNode(node) {
