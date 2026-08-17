@@ -5,6 +5,7 @@ __pycache__/
 .env
 .env.*
 galaxy_path.json
+galaxies/
 .DS_Store
 Thumbs.db
 *.swp
