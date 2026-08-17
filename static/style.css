@@ -337,6 +337,60 @@ input {
   text-align: center;
 }
 
+/* ---------- Tree drag & drop ---------- */
+
+.tree li.press {
+  background: var(--bg-sel);
+}
+
+.tree li.dragging {
+  opacity: 0.35;
+}
+
+.tree li.dragging-row {
+  touch-action: none;
+}
+
+.tree li.drop-target {
+  box-shadow: inset 0 0 0 2px var(--link);
+  background: var(--link-bg);
+}
+
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 500;
+  pointer-events: none;
+  background: var(--menu-bg);
+  border: 1px solid var(--link);
+  color: var(--fg);
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.root-drop-zone {
+  margin: 2px 2px 6px;
+  padding: 8px;
+  border: 1px dashed var(--dim);
+  color: var(--dim);
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.root-drop-zone.drop-target {
+  border-color: var(--link);
+  color: var(--link);
+  background: var(--link-bg);
+}
+
 #workspace {
   flex: 1;
   display: flex;
@@ -1109,6 +1163,16 @@ input {
     min-width: 30px;
     min-height: 30px;
     font-size: 14px;
+  }
+
+  .drag-ghost {
+    padding: 10px 14px;
+    font-size: 15px;
+    border-radius: 8px;
+  }
+
+  .root-drop-zone {
+    padding: 12px;
   }
 
   #workspace {

@@ -132,6 +132,7 @@
       name.textContent = entry.path.split("/").pop();
       row.append(twist, icon, name);
       row.appendChild(actions(li, entry));
+      row.addEventListener("pointerdown", (e) => startRowDrag(li, entry, e));
       li.appendChild(row);
       const childUl = document.createElement("ul");
       (entry.children || []).forEach((child) => childUl.appendChild(renderEntry(child)));
@@ -146,6 +147,8 @@
       });
       li.addEventListener("click", (e) => {
         if (e.target.closest(".actions")) return;
+        if (isClickSuppressed(e)) return;
+        if (!row.contains(e.target)) return;
         twist.click();
       });
     } else {
@@ -157,9 +160,11 @@
       name.textContent = entry.path.split("/").pop();
       row.append(icon, name);
       row.appendChild(actions(li, entry));
+      row.addEventListener("pointerdown", (e) => startRowDrag(li, entry, e));
       li.appendChild(row);
       li.addEventListener("click", (e) => {
         if (e.target.closest(".actions")) return;
+        if (isClickSuppressed(e)) return;
         openFile(entry.path);
       });
     }
@@ -210,6 +215,219 @@
       const child = li.querySelector(":scope > ul");
       if (child) child.style.display = "none";
     });
+  });
+
+  // ---------- Tree drag & drop ----------
+
+  const LONG_PRESS_MS = 350;
+  const DRAG_CANCEL_DIST = 8;
+  const HOVER_EXPAND_MS = 600;
+  const CLICK_SUPPRESS_MS = 400;
+
+  let dragState = null;
+  let suppressTreeClickUntil = 0;
+
+  function isClickSuppressed(e) {
+    if (performance.now() >= suppressTreeClickUntil) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+  }
+
+  function parentDir(path) {
+    const i = path.lastIndexOf("/");
+    return i === -1 ? "" : path.slice(0, i);
+  }
+
+  function startRowDrag(li, entry, e) {
+    if (e.target.closest(".actions") || e.target.closest(".twist")) return;
+    if (dragState) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const row = li.querySelector(".row") || li;
+    dragState = {
+      entry,
+      li,
+      row,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      ghost: null,
+      rootZone: null,
+      target: null,
+      timer: null,
+      expandTimer: null,
+    };
+    li.classList.add("press");
+    dragState.timer = setTimeout(() => activateDrag(dragState), LONG_PRESS_MS);
+  }
+
+  function activateDrag(s) {
+    if (dragState !== s) return;
+    s.timer = null;
+    s.active = true;
+    s.row.classList.add("dragging-row");
+    s.li.classList.remove("press");
+    s.li.classList.add("dragging");
+    if (s.pointerType === "touch" && navigator.vibrate) navigator.vibrate(10);
+    try {
+      s.row.setPointerCapture(s.pointerId);
+    } catch (err) {}
+    const ghost = document.createElement("div");
+    ghost.className = "drag-ghost";
+    ghost.textContent =
+      (s.entry.type === "star" ? "★ " : "● ") + s.entry.path.split("/").pop();
+    document.body.appendChild(ghost);
+    s.ghost = ghost;
+    s.ghostW = ghost.offsetWidth;
+    s.ghostH = ghost.offsetHeight;
+    const zone = document.createElement("div");
+    zone.className = "root-drop-zone";
+    zone.textContent = "move to root";
+    treeRoot.prepend(zone);
+    s.rootZone = zone;
+    positionGhost(s, s.startX, s.startY);
+  }
+
+  function positionGhost(s, x, y) {
+    s.ghost.style.transform =
+      "translate(" +
+      (x - s.ghostW / 2).toFixed(0) +
+      "px," +
+      (y - s.ghostH - 18).toFixed(0) +
+      "px)";
+  }
+
+  function documentPointerMove(e) {
+    const s = dragState;
+    if (!s || e.pointerId !== s.pointerId) return;
+    if (!s.active) {
+      if (Math.hypot(e.clientX - s.startX, e.clientY - s.startY) > DRAG_CANCEL_DIST) {
+        cleanupDrag(false);
+      }
+      return;
+    }
+    e.preventDefault();
+    positionGhost(s, e.clientX, e.clientY);
+    updateDropTarget(s, e.clientX, e.clientY);
+    autoScrollTree(s, e.clientY);
+  }
+
+  function documentPointerUp(e) {
+    const s = dragState;
+    if (!s || e.pointerId !== s.pointerId) return;
+    if (s.active) performDrop(s);
+    cleanupDrag(s.active);
+  }
+
+  function documentPointerCancel(e) {
+    const s = dragState;
+    if (!s || e.pointerId !== s.pointerId) return;
+    cleanupDrag(true);
+  }
+
+  function updateDropTarget(s, cx, cy) {
+    clearTimeout(s.expandTimer);
+    s.expandTimer = null;
+    const el = document.elementFromPoint(cx, cy);
+    let target = null;
+    if (el && s.rootZone && s.rootZone.contains(el)) {
+      target = { li: s.rootZone, folder: "" };
+    } else if (el) {
+      const li = el.closest(".tree li");
+      if (li && li !== s.li) {
+        const isStar = li.classList.contains("star");
+        const folder = isStar ? li.dataset.path : parentDir(li.dataset.path);
+        if (isStar || folder) target = { li, folder };
+      }
+    }
+    if (target && s.entry.type === "star" && target.folder) {
+      if (
+        target.folder === s.entry.path ||
+        target.folder.startsWith(s.entry.path + "/")
+      ) {
+        target = null;
+      }
+    }
+    if (target && target.folder === parentDir(s.entry.path)) target = null;
+    if (s.target !== target) {
+      if (s.target && s.target.li) s.target.li.classList.remove("drop-target");
+      s.target = target;
+      if (s.target && s.target.li) s.target.li.classList.add("drop-target");
+    }
+    if (
+      target &&
+      target.li.classList.contains("star") &&
+      !target.li.classList.contains("open")
+    ) {
+      s.expandTimer = setTimeout(() => expandStar(target.li), HOVER_EXPAND_MS);
+    }
+  }
+
+  function expandStar(li) {
+    const path = li.dataset.path;
+    li.classList.add("open");
+    openState.set(path, true);
+    const t = li.querySelector(".twist");
+    if (t) t.textContent = "▾";
+    const child = li.querySelector(":scope > ul");
+    if (child) child.style.display = "";
+  }
+
+  function autoScrollTree(s, cy) {
+    const sidebar = $("#sidebar");
+    const rect = sidebar.getBoundingClientRect();
+    const edge = 32;
+    if (cy < rect.top + edge) {
+      sidebar.scrollTop -= 12;
+    } else if (cy > rect.bottom - edge) {
+      sidebar.scrollTop += 12;
+    }
+  }
+
+  async function performDrop(s) {
+    if (!s.target) return;
+    const from = s.entry.path;
+    const base = from.split("/").pop();
+    const to = s.target.folder ? s.target.folder + "/" + base : base;
+    if (to === from) return;
+    try {
+      if (dirty && currentFile) await saveFile();
+      await api("POST", "/api/rename", { from, to });
+      if (currentFile && (currentFile === from || currentFile.startsWith(from + "/"))) {
+        currentFile = to + currentFile.slice(from.length);
+        dirty = true;
+      }
+      await loadTree();
+      if (dirty) await saveFile();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function cleanupDrag(suppressClick) {
+    const s = dragState;
+    if (!s) return;
+    if (s.timer) clearTimeout(s.timer);
+    if (s.expandTimer) clearTimeout(s.expandTimer);
+    if (s.target && s.target.li) s.target.li.classList.remove("drop-target");
+    if (s.ghost) s.ghost.remove();
+    if (s.rootZone) s.rootZone.remove();
+    s.li.classList.remove("dragging", "press");
+    s.row.classList.remove("dragging-row");
+    dragState = null;
+    if (suppressClick) suppressTreeClickUntil = performance.now() + CLICK_SUPPRESS_MS;
+  }
+
+  document.addEventListener("pointermove", documentPointerMove);
+  document.addEventListener("pointerup", documentPointerUp);
+  document.addEventListener("pointercancel", documentPointerCancel);
+  treeRoot.addEventListener("contextmenu", (e) => {
+    if (dragState) e.preventDefault();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && dragState) cleanupDrag(true);
   });
 
   backBtn.addEventListener("click", () => history.back());
