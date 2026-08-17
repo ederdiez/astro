@@ -1,9 +1,9 @@
+import argparse
 import json
 import os
 import re
 import shutil
 
-import markdown
 from flask import Flask, jsonify, render_template, request
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,11 +11,22 @@ GALAXIES_DIR = os.path.join(BASE_DIR, "galaxies")
 GALAXY_PATH_FILE = os.path.join(BASE_DIR, "galaxy_path.json")
 INDEX_NOTE_FILE = os.path.join(BASE_DIR, "index_note.json")
 
-MD_EXTENSIONS = ["fenced_code", "tables", "codehilite", "nl2br"]
 VALID_NAME_RE = re.compile(r"^[^/\\:*?\"<>|\x00-\x1f]+$")
 IMPORT_SKIP_DIRS = {".venv", "__pycache__", "node_modules", ".git", "static", "templates"}
 
+HOME_DIR = os.path.realpath(os.path.expanduser("~"))
+BROWSE_ROOTS = (HOME_DIR, os.path.realpath(BASE_DIR))
+
 app = Flask(__name__)
+
+
+def within_browse_roots(target):
+    if not target:
+        return False
+    return any(
+        os.path.commonpath([target, root]) == root
+        for root in BROWSE_ROOTS
+    )
 
 
 def is_within(child, root):
@@ -201,6 +212,8 @@ def api_import_galaxy():
     src = os.path.realpath(src if os.path.isabs(src) else os.path.join(BASE_DIR, src))
     if not os.path.isdir(src):
         return jsonify({"error": "source folder not found"}), 404
+    if not within_browse_roots(src):
+        return jsonify({"error": "source outside allowed roots"}), 400
     if not name or name.startswith(".") or not VALID_NAME_RE.match(name):
         name = os.path.basename(src.rstrip("/"))
     if not name or name.startswith(".") or not VALID_NAME_RE.match(name):
@@ -238,6 +251,8 @@ def api_dirs():
         root = os.path.realpath(BASE_DIR)
     if not root or not os.path.isdir(root):
         return jsonify({"error": "invalid path"}), 400
+    if not within_browse_roots(root):
+        return jsonify({"error": "path outside allowed roots"}), 400
     dirs = []
     try:
         for name in sorted(os.listdir(root)):
@@ -251,6 +266,8 @@ def api_dirs():
         pass
     parent = os.path.dirname(root)
     if parent == root:
+        parent = None
+    elif not within_browse_roots(parent):
         parent = None
     return jsonify({"current": root, "dirs": dirs, "parent": parent})
 
@@ -480,28 +497,17 @@ def api_search():
     return jsonify({"results": results})
 
 
-@app.route("/api/preview", methods=["GET", "POST"])
-def api_preview():
-    if request.method == "GET":
-        body = request.args.get("markdown", "")
-    else:
-        body = (request.get_json(silent=True) or {}).get("markdown", "")
-    return jsonify({"html": render_markdown(body)})
-
-
-def render_markdown(text):
-    return markdown.markdown(
-        text,
-        extensions=MD_EXTENSIONS,
-        output_format="html5",
-    )
-
-
 @app.get("/")
 def index():
     return render_template("index.html")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Astro markdown notes server")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=5005)
+    parser.add_argument("--debug", action="store_true", help="enable Flask debug mode (unsafe on networks)")
+    args = parser.parse_args()
+
     os.makedirs(GALAXIES_DIR, exist_ok=True)
-    app.run(host="0.0.0.0", port=5005, debug=True)
+    app.run(host=args.host, port=args.port, debug=args.debug)

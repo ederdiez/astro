@@ -110,6 +110,13 @@ sudo tailscale serve --bg 5005
 
 Tailscale will provide a private HTTPS address accessible from devices in your tailnet.
 
+> **Security note**: Astro has **no built-in authentication**. Anyone who can reach port
+> `5005` can read and edit all your notes. Only expose it on networks you trust.
+> If you use Tailscale, restrict access with a Tailscale ACL so only your devices can
+> reach the server, for example by tagging the server and limiting who can dial it
+> (see the Tailscale admin console → ACLs). Do not forward the port to the public
+> Internet.
+
 ## Data
 
 Notes are stored as regular Markdown files inside:
