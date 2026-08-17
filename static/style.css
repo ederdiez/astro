@@ -800,6 +800,11 @@ input {
   color: var(--fg);
 }
 
+#graph-tools button.active {
+  color: var(--fg);
+  border-color: var(--orbit);
+}
+
 #graph-close {
   font-size: 16px;
   border-color: transparent;

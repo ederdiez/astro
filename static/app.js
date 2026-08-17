@@ -419,6 +419,8 @@
   const graphSvg = $("#graph-svg");
   const graphClose = $("#graph-close");
   const graphPauseBtn = $("#graph-pause");
+  const graphOrbitsBtn = $("#graph-orbits");
+  let showOrbits = true;
   let graphAnim = null;
   let graphView = null;
   let graphHome = null;
@@ -551,6 +553,13 @@
     } else {
       wakeSim();
     }
+  });
+  graphOrbitsBtn.addEventListener("click", () => {
+    showOrbits = !showOrbits;
+    graphOrbitsBtn.classList.toggle("active", showOrbits);
+    document.querySelectorAll(".orbit-path").forEach((el) => {
+      el.style.display = showOrbits ? "" : "none";
+    });
   });
   graphOverlay.addEventListener("click", (e) => {
     if (e.target === graphOverlay) closeGraph();
@@ -724,6 +733,7 @@
     try {
       const data = await api("GET", "/api/graph");
       graphOverlay.classList.remove("hidden");
+      graphOrbitsBtn.classList.toggle("active", showOrbits);
       buildAstroView(data);
     } catch (err) {
       alert(err.message);
@@ -866,6 +876,7 @@
           buildSystem(bodyG, orb.child, sub);
         }
         orbitG.append(path, bodyG);
+        if (!showOrbits) path.style.display = "none";
         starG.appendChild(orbitG);
       });
     }
