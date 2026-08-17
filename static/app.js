@@ -593,9 +593,11 @@
   const pointers = new Map();
   let pan = null;
   let pinch = null;
+  let dragActive = false;
+  let suppressClickUntil = 0;
+  const DRAG_THRESHOLD = 6;
 
   graphSvg.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".graph-node")) return;
     graphSvg.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, {
       x: svgPoint(e.clientX, e.clientY).x,
@@ -604,6 +606,8 @@
       cy: e.clientY,
     });
     if (pointers.size === 1) {
+      suppressClickUntil = 0;
+      dragActive = false;
       pan = { sx: e.clientX, sy: e.clientY, vx: graphView.x, vy: graphView.y };
       pinch = null;
       graphSvg.classList.add("panning");
@@ -618,6 +622,7 @@
         vk: graphView.k,
       };
       pan = null;
+      dragActive = true;
     }
   });
 
@@ -638,10 +643,15 @@
       graphView.x = cx - (k2 * (pinch.cx - pinch.vx)) / pinch.vk;
       graphView.y = cy - (k2 * (pinch.cy - pinch.vy)) / pinch.vk;
       graphView.k = k2;
+      dragActive = true;
       applyView();
     } else if (pan) {
-      graphView.x = pan.vx + (e.clientX - pan.sx);
-      graphView.y = pan.vy + (e.clientY - pan.sy);
+      const dx = e.clientX - pan.sx;
+      const dy = e.clientY - pan.sy;
+      if (!dragActive && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      dragActive = true;
+      graphView.x = pan.vx + dx;
+      graphView.y = pan.vy + dy;
       applyView();
     }
   });
@@ -656,12 +666,29 @@
     } else if (pointers.size === 0) {
       pan = null;
       pinch = null;
+      if (dragActive) suppressClickUntil = performance.now() + 400;
+      dragActive = false;
       graphSvg.classList.remove("panning");
     }
   }
 
   graphSvg.addEventListener("pointerup", endPointer);
   graphSvg.addEventListener("pointercancel", endPointer);
+
+  graphSvg.addEventListener(
+    "click",
+    (e) => {
+      if (performance.now() < suppressClickUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    true
+  );
+
+  ["gesturestart", "gesturechange", "gestureend"].forEach((type) =>
+    graphOverlay.addEventListener(type, (e) => e.preventDefault(), { passive: false })
+  );
 
   graphSvg.addEventListener(
     "wheel",
@@ -695,6 +722,8 @@
     graphBodies = [];
     pan = null;
     pinch = null;
+    dragActive = false;
+    suppressClickUntil = 0;
     pointers.clear();
     graphSvg.classList.remove("panning");
   }
