@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Astro</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem("astro-theme") || "astro";
+  </script>
 </head>
 <body>
   <header id="topbar">

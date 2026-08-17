@@ -4,6 +4,26 @@
   --dim: #888;
   --border: #333;
   --border-dim: #1c1c1c;
+  --bg-soft: #111;
+  --bg-sel: #1a1a1a;
+  --menu-bg: #000;
+  --overlay: rgba(0, 0, 0, 0.8);
+  --orbit: #262626;
+  --orbit-dim: #555;
+}
+
+html[data-theme="dracula"] {
+  --bg: #282a36;
+  --fg: #f8f8f2;
+  --dim: #6272a4;
+  --border: #44475a;
+  --border-dim: #343746;
+  --bg-soft: #21222c;
+  --bg-sel: #44475a;
+  --menu-bg: #282a36;
+  --overlay: rgba(40, 42, 54, 0.85);
+  --orbit: #44475a;
+  --orbit-dim: #6272a4;
 }
 
 * {
@@ -28,7 +48,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
@@ -188,11 +209,11 @@ input {
 }
 
 .tree li:hover {
-  background: #111;
+  background: var(--bg-soft);
 }
 
 .tree li.selected {
-  background: #1a1a1a;
+  background: var(--bg-sel);
 }
 
 .tree li.star .twist {
@@ -368,8 +389,7 @@ input {
 }
 
 #editor .lp-codeline {
-  background: #111;
-  padding: 0 12px;
+  background: var(--bg-soft);
 }
 
 #editor .lp-code-open {
@@ -450,7 +470,7 @@ input {
   right: 0;
   max-width: 480px;
   margin: 0 auto;
-  background: #000;
+  background: var(--menu-bg);
   border: 1px solid var(--border);
   z-index: 100;
   max-height: 60vh;
@@ -464,7 +484,7 @@ input {
 }
 
 .result-item:hover {
-  background: #111;
+  background: var(--bg-soft);
 }
 
 .result-item .r-title {
@@ -483,7 +503,7 @@ input {
 #modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--overlay);
   z-index: 400;
   display: flex;
   align-items: center;
@@ -493,7 +513,7 @@ input {
 #modal {
   width: 420px;
   max-width: 90vw;
-  background: #000;
+  background: var(--menu-bg);
   border: 1px solid var(--border);
   padding: 16px;
 }
@@ -511,7 +531,8 @@ input {
   overflow-y: auto;
 }
 
-#modal-body input {
+#modal-body input,
+#modal-body select {
   width: 100%;
 }
 
@@ -525,7 +546,7 @@ input {
 }
 
 #modal-body .dir-list li:hover {
-  background: #111;
+  background: var(--bg-soft);
 }
 
 #modal-body .dir-list li.go-up {
@@ -612,12 +633,12 @@ input {
 }
 
 #modal-body .galaxy-list li:hover {
-  background: #111;
+  background: var(--bg-soft);
 }
 
 #modal-body .galaxy-list li.sel {
   border-color: var(--fg);
-  background: #111;
+  background: var(--bg-soft);
 }
 
 #modal-body .galaxy-list li.current {
@@ -741,17 +762,17 @@ input {
 
 #graph-legend .lg-orbit::before {
   content: "── ";
-  color: #2a2a2a;
+  color: var(--orbit);
 }
 
 #graph-legend .lg-nav {
   margin-left: auto;
-  color: #555;
+  color: var(--orbit-dim);
 }
 
 .orbit-path {
   fill: none;
-  stroke: #262626;
+  stroke: var(--orbit);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
@@ -859,7 +880,7 @@ input {
     left: 0;
     width: min(280px, 82vw);
     z-index: 140;
-    background: #000;
+    background: var(--menu-bg);
     border-right: 1px solid var(--border);
     transform: translateX(-100%);
     transition: transform 0.2s ease;

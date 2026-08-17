@@ -15,6 +15,21 @@
   let currentGalaxyPath = "";
   const openState = new Map();
 
+  const THEME_KEY = "astro-theme";
+  const THEMES = [
+    { id: "astro", label: "Astro (dark)" },
+    { id: "dracula", label: "Dracula" },
+  ];
+
+  function applyTheme(id) {
+    const theme = id === "dracula" ? "dracula" : "astro";
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+    return theme;
+  }
+
+  applyTheme(localStorage.getItem(THEME_KEY));
+
   async function api(method, url, body) {
     const opts = { method, headers: {} };
     if (body !== undefined) {
@@ -996,6 +1011,17 @@
   // ---------- Settings (index note) ----------
 
   async function openSettings() {
+    const themeLabel = document.createElement("div");
+    themeLabel.className = "field-label";
+    themeLabel.textContent = "Theme";
+    const themeSel = document.createElement("select");
+    THEMES.forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = t.label;
+      themeSel.appendChild(opt);
+    });
+    themeSel.value = localStorage.getItem(THEME_KEY) || "astro";
     let indexNote = null;
     try {
       const data = await api("GET", "/api/index-note");
@@ -1027,9 +1053,10 @@
     hint.className = "field-label";
     hint.textContent = "Like a home page for your galaxy.";
     const body = document.createElement("div");
-    body.append(label, row, clearBtn, hint);
+    body.append(themeLabel, themeSel, label, row, clearBtn, hint);
     const ok = await showModal("Settings", body, "Save");
     if (!ok) return;
+    applyTheme(themeSel.value);
     try {
       await api("PUT", "/api/index-note", { path: input.value.trim() });
     } catch (err) {
