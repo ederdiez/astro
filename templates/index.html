@@ -14,11 +14,11 @@
     <button id="menu-btn" title="Files" aria-label="Files">☰</button>
     <button id="back-btn" title="Back" aria-label="Back" disabled>←</button>
     <button id="undo-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↺</button>
-    <button id="redo-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↻</button>
+    <button id="redo-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↻<span class="btn-label">Redo</span></button>
     <span class="brand">ASTRO</span>
     <button id="graph-btn" title="Galaxy graph" aria-label="Galaxy graph">◎</button>
     <button id="galaxy-btn" title="Choose galaxy">◈ <span id="galaxy-label">galaxies</span></button>
-    <button id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
+    <button id="settings-btn" title="Settings" aria-label="Settings">⚙<span class="btn-label">Settings</span></button>
     <input id="search-input" type="text" placeholder="Search planets…" autocomplete="off">
     <span id="save-state" class="save-state"></span>
   </header>
@@ -32,6 +32,7 @@
         <button id="new-star-btn" title="New star">+ Star</button>
         <button id="collapse-all-btn" title="Collapse all folders">▾▾</button>
       </div>
+      <div id="sidebar-tools"></div>
       <div id="tree-root"></div>
     </aside>
 

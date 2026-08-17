@@ -220,6 +220,10 @@ input {
   background: transparent;
 }
 
+.btn-label {
+  display: none;
+}
+
 .save-state {
   margin-left: auto;
   color: var(--dim);
@@ -973,75 +977,81 @@ input {
 /* ---------- Mobile ---------- */
 
 @media (max-width: 768px) {
-  #menu-btn {
-    display: inline-flex;
+  #topbar {
+    gap: 6px;
+    padding: 4px 8px;
+    padding-top: calc(4px + env(safe-area-inset-top));
+  }
+
+  #topbar > button {
+    flex-shrink: 0;
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 40px;
-    min-height: 40px;
-    font-size: 16px;
+    font-size: 15px;
+    border-color: transparent;
+    color: var(--dim);
+    padding: 0 4px;
+  }
+
+  #topbar > #menu-btn {
     border-color: var(--border-dim);
   }
 
-  #topbar {
-    gap: 8px;
-    padding: 6px 10px;
-    padding-top: calc(6px + env(safe-area-inset-top));
-  }
-
-  .brand {
-    letter-spacing: 2px;
-  }
-
-  #galaxy-btn {
-    min-width: 40px;
-    min-height: 40px;
-    justify-content: center;
-    font-size: 16px;
-  }
-
-#graph-btn {
-    min-width: 40px;
-    min-height: 40px;
-    font-size: 16px;
-  }
-
-  #back-btn {
-    min-width: 40px;
-    min-height: 40px;
-    justify-content: center;
-    font-size: 16px;
-  }
-
-  #undo-btn,
-  #redo-btn {
-    min-width: 40px;
-    min-height: 40px;
-    justify-content: center;
-    font-size: 16px;
-  }
-
-  #settings-btn {
-    min-width: 40px;
-    min-height: 40px;
-    font-size: 16px;
-  }
-
-  #galaxy-btn span {
+  #topbar > #redo-btn,
+  #topbar > #search-input,
+  #topbar > #galaxy-btn,
+  #topbar > #settings-btn,
+  #topbar > .save-state {
     display: none;
   }
 
-  #search-input {
-    max-width: none;
-    flex: 1;
-    min-width: 0;
+  #topbar .brand {
+    margin-right: auto;
+    letter-spacing: 3px;
+    font-size: 13px;
+    padding: 0 6px;
+  }
+
+  #sidebar-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 4px 10px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border-dim);
+  }
+
+  #sidebar-tools #search-input {
+    display: block;
+    width: 100%;
     font-size: 16px;
     padding: 8px 10px;
   }
 
-  .save-state {
-    min-width: 0;
-    font-size: 11px;
+  #sidebar-tools #galaxy-btn,
+  #sidebar-tools #settings-btn,
+  #sidebar-tools #redo-btn {
+    display: flex;
+    width: 100%;
+    min-height: 40px;
+    justify-content: flex-start;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--dim);
+    padding: 0 10px;
+  }
+
+  #sidebar-tools #galaxy-btn span,
+  #sidebar-tools .btn-label {
+    display: inline;
+  }
+
+  #sidebar-tools button:hover {
+    color: var(--fg);
+    border-color: var(--fg);
   }
 
   #backdrop {
@@ -1062,7 +1072,7 @@ input {
 
   #sidebar {
     position: fixed;
-    top: calc(52px + env(safe-area-inset-top));
+    top: calc(44px + env(safe-area-inset-top));
     bottom: 0;
     left: 0;
     width: min(280px, 82vw);
@@ -1113,7 +1123,7 @@ input {
   }
 
   #search-results {
-    top: calc(52px + env(safe-area-inset-top));
+    top: calc(44px + env(safe-area-inset-top));
     max-width: none;
     margin: 0 10px;
     left: 0;

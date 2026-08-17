@@ -66,6 +66,23 @@
 
   backdrop.addEventListener("click", closeDrawer);
 
+  const topbarMQ = window.matchMedia("(max-width: 768px)");
+
+  function layoutMobileTopbar() {
+    const sidebarTools = $("#sidebar-tools");
+    if (topbarMQ.matches) {
+      sidebarTools.append(redoBtn, searchInput, $("#galaxy-btn"), $("#settings-btn"));
+    } else {
+      undoBtn.after(redoBtn);
+      $("#graph-btn").after($("#galaxy-btn"), $("#settings-btn"));
+      saveState.before(searchInput);
+    }
+  }
+
+  if (topbarMQ.addEventListener) topbarMQ.addEventListener("change", layoutMobileTopbar);
+  else topbarMQ.addListener(layoutMobileTopbar);
+  layoutMobileTopbar();
+
   // ---------- Tree ----------
 
   async function loadTree() {
