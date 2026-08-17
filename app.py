@@ -1,10 +1,12 @@
 import argparse
+import io
 import json
 import os
 import re
 import shutil
+import zipfile
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GALAXIES_DIR = os.path.join(BASE_DIR, "galaxies")
@@ -237,6 +239,31 @@ def api_import_galaxy():
     rel = rel_from_base(dst)
     save_galaxy(rel)
     return jsonify({"path": rel, "name": name})
+
+
+@app.get("/api/galaxy/download")
+def api_download_galaxy():
+    root = galaxy_path()
+    if not root:
+        return jsonify({"error": "no galaxy configured"}), 409
+    name = os.path.basename(root.rstrip("/")) or "galaxy"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for fname in files:
+                if fname.startswith("."):
+                    continue
+                full = os.path.join(dirpath, fname)
+                arc = os.path.relpath(full, root).replace(os.sep, "/")
+                zf.write(full, arc)
+    buf.seek(0)
+    return send_file(
+        buf,
+        as_attachment=True,
+        download_name=name + ".zip",
+        mimetype="application/zip",
+    )
 
 
 @app.get("/api/dirs")

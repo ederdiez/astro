@@ -1111,8 +1111,17 @@
     const hint = document.createElement("div");
     hint.className = "field-label";
     hint.textContent = "Like a home page for your galaxy.";
+    const backupLabel = document.createElement("div");
+    backupLabel.className = "field-label";
+    backupLabel.textContent = "Backup";
+    const dlBtn = document.createElement("button");
+    dlBtn.type = "button";
+    dlBtn.textContent = "Download galaxy (.zip)";
+    dlBtn.addEventListener("click", () => {
+      window.location.href = "/api/galaxy/download";
+    });
     const body = document.createElement("div");
-    body.append(themeLabel, themeSel, label, row, clearBtn, hint);
+    body.append(themeLabel, themeSel, label, row, clearBtn, hint, backupLabel, dlBtn);
     const ok = await showModal("Settings", body, "Save");
     if (!ok) return;
     applyTheme(themeSel.value);
