@@ -8,6 +8,8 @@
   const searchResults = $("#search-results");
   const saveState = $("#save-state");
   const backBtn = $("#back-btn");
+  const undoBtn = $("#undo-btn");
+  const redoBtn = $("#redo-btn");
 
   let tree = [];
   let currentFile = null;
@@ -201,6 +203,7 @@
     currentFile = path;
     undoStack.length = 0;
     redoStack.length = 0;
+    updateUndoButtons();
     liveApply(data.content, 0);
     editor.scrollTop = 0;
     dirty = false;
@@ -314,8 +317,60 @@
   let lastSource = "";
   let suppressSel = false;
   let selPending = false;
+  let pendingCaret = null;
   const undoStack = [];
   const redoStack = [];
+
+  function clampOffset(c, len) {
+    if (typeof c !== "number" || !isFinite(c) || c < 0) return len;
+    return Math.min(c, len);
+  }
+
+  function markDirty() {
+    dirty = true;
+    saveState.textContent = "unsaved";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveFile, 800);
+  }
+
+  function pushUndo(source, caret) {
+    undoStack.push({ source, caret });
+    if (undoStack.length > 300) undoStack.shift();
+    redoStack.length = 0;
+    updateUndoButtons();
+  }
+
+  function updateUndoButtons() {
+    undoBtn.disabled = undoStack.length === 0;
+    redoBtn.disabled = redoStack.length === 0;
+  }
+
+  function undo() {
+    const entry = undoStack.pop();
+    if (entry === undefined) return;
+    const cur = LiveEditor.caretOffset(editor);
+    redoStack.push({ source: lastSource, caret: cur >= 0 ? cur : lastSource.length });
+    lastEditorAction = "caret";
+    liveApply(entry.source, clampOffset(entry.caret, entry.source.length));
+    markDirty();
+    editor.focus();
+    updateUndoButtons();
+  }
+
+  function redo() {
+    const entry = redoStack.pop();
+    if (entry === undefined) return;
+    const cur = LiveEditor.caretOffset(editor);
+    undoStack.push({ source: lastSource, caret: cur >= 0 ? cur : lastSource.length });
+    lastEditorAction = "caret";
+    liveApply(entry.source, clampOffset(entry.caret, entry.source.length));
+    markDirty();
+    editor.focus();
+    updateUndoButtons();
+  }
+
+  undoBtn.addEventListener("click", undo);
+  redoBtn.addEventListener("click", redo);
 
   function liveApply(source, caret) {
     const scrollTop = editor.scrollTop;
@@ -329,6 +384,21 @@
     if (caret >= 0) requestAnimationFrame(() => maybeShowAutocomplete(source, caret));
   }
 
+  editor.addEventListener("beforeinput", (e) => {
+    if (e.isComposing) return;
+    if (e.inputType === "historyUndo") {
+      e.preventDefault();
+      undo();
+      return;
+    }
+    if (e.inputType === "historyRedo") {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    pendingCaret = LiveEditor.caretOffset(editor);
+  });
+
   editor.addEventListener("input", (e) => {
     if (e.isComposing) return;
     lastEditorAction = "input";
@@ -336,15 +406,11 @@
     const offset = LiveEditor.caretOffset(editor);
     const md = LiveEditor.source(editor);
     if (md !== prev) {
-      undoStack.push(prev);
-      if (undoStack.length > 300) undoStack.shift();
-      redoStack.length = 0;
+      pushUndo(prev, pendingCaret != null ? pendingCaret : offset);
     }
+    pendingCaret = null;
     liveApply(md, offset);
-    dirty = true;
-    saveState.textContent = "unsaved";
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveFile, 800);
+    markDirty();
   });
 
   editor.addEventListener("keydown", (e) => {
@@ -372,22 +438,14 @@
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
-      const offset = LiveEditor.caretOffset(editor);
-      let s;
       if (e.shiftKey) {
-        s = redoStack.pop();
-        if (s !== undefined) undoStack.push(lastSource);
+        redo();
       } else {
-        s = undoStack.pop();
-        if (s !== undefined) redoStack.push(lastSource);
+        undo();
       }
-      if (s !== undefined) {
-        liveApply(s, Math.min(offset, s.length));
-        dirty = true;
-        saveState.textContent = "unsaved";
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(saveFile, 800);
-      }
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      redo();
     } else if (e.key === "Tab") {
       e.preventDefault();
       document.execCommand("insertText", false, "    ");
@@ -417,6 +475,7 @@
     requestAnimationFrame(() => {
       selPending = false;
       lastEditorAction = "caret";
+      pendingCaret = null;
       const offset = LiveEditor.caretOffset(editor);
       const md = LiveEditor.source(editor);
       if (md !== lastSource) return;
@@ -1635,12 +1694,9 @@
     if (!ac) return;
     const md = LiveEditor.source(editor);
     const insert = "[[" + item.link + (ac.alias ? "|" + ac.alias : "") + "]]";
-    undoStack.push(lastSource);
+    pushUndo(lastSource, ac.open);
     liveApply(md.slice(0, ac.open) + insert + md.slice(ac.end), ac.open + insert.length);
-    dirty = true;
-    saveState.textContent = "unsaved";
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveFile, 800);
+    markDirty();
     closeAc();
     if (item.kind === "create") {
       api("POST", "/api/file", { path: item.path }).then(loadTree).catch(() => {});
