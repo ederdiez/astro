@@ -259,6 +259,7 @@
       timer: null,
       expandTimer: null,
     };
+    document.body.classList.add("dragging");
     li.classList.add("press");
     dragState.timer = setTimeout(() => activateDrag(dragState), LONG_PRESS_MS);
   }
@@ -267,6 +268,9 @@
     if (dragState !== s) return;
     s.timer = null;
     s.active = true;
+    if (window.getSelection && window.getSelection().removeAllRanges) {
+      window.getSelection().removeAllRanges();
+    }
     s.row.classList.add("dragging-row");
     s.li.classList.remove("press");
     s.li.classList.add("dragging");
@@ -417,12 +421,16 @@
     s.li.classList.remove("dragging", "press");
     s.row.classList.remove("dragging-row");
     dragState = null;
+    document.body.classList.remove("dragging");
     if (suppressClick) suppressTreeClickUntil = performance.now() + CLICK_SUPPRESS_MS;
   }
 
   document.addEventListener("pointermove", documentPointerMove);
   document.addEventListener("pointerup", documentPointerUp);
   document.addEventListener("pointercancel", documentPointerCancel);
+  document.addEventListener("selectstart", (e) => {
+    if (dragState) e.preventDefault();
+  });
   treeRoot.addEventListener("contextmenu", (e) => {
     if (dragState) e.preventDefault();
   });

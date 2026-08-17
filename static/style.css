@@ -339,6 +339,13 @@ input {
 
 /* ---------- Tree drag & drop ---------- */
 
+body.dragging,
+body.dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
 .tree li.press {
   background: var(--bg-sel);
 }
