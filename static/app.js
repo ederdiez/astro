@@ -243,6 +243,7 @@
     if (e.target.closest(".actions") || e.target.closest(".twist")) return;
     if (dragState) return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (e.pointerType !== "mouse") e.preventDefault();
     const row = li.querySelector(".row") || li;
     dragState = {
       entry,
