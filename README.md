@@ -2,6 +2,8 @@
 
 A minimal, self-hosted Markdown note-taking application inspired by Obsidian.
 
+![Astro](static/astro.png)
+
 ## Requirements
 
 * Python 3.14+
