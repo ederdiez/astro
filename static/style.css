@@ -30,10 +30,38 @@ html[data-theme="dracula"] {
   --link-bg: rgba(139, 233, 253, 0.14);
 }
 
+/* ---------- Scrollbars ---------- */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dim);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg);
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+html {
+  scrollbar-color: var(--border) var(--bg);
 }
 
 html,
