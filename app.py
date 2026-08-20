@@ -428,8 +428,84 @@ def api_rename():
     if os.path.exists(dst):
         return jsonify({"error": "target already exists"}), 409
     os.makedirs(os.path.dirname(dst), exist_ok=True)
+
+    # Estructura vieja de archivos para resolver wikilinks antes del rename
+    root = galaxy_path()
+    frm = body.get("from", "")
+    to = body.get("to", "")
+    planets_before = []
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in files:
+            if not name.endswith(".md"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, name), root).replace(os.sep, "/")
+            planets_before.append(rel)
+    by_base_before = {}
+    for pid in planets_before:
+        base = pid[:-3] if pid.endswith(".md") else pid
+        by_base_before.setdefault(base.rsplit("/", 1)[-1], []).append(pid)
+    is_file = frm.endswith(".md")
+    old_base = os.path.basename(frm)[:-3] if is_file else os.path.basename(frm)
+    new_base = os.path.basename(to)[:-3] if to.endswith(".md") else os.path.basename(to)
+    old_noext = frm[:-3] if is_file else frm
+    new_noext = to[:-3] if to.endswith(".md") else to
+
     os.rename(src, dst)
-    return jsonify({"from": body.get("from"), "to": body.get("to")})
+
+    # Reconstruir los wikilinks de todos los planetas tras el rename
+    updated = 0
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in files:
+            if not name.endswith(".md"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, name), root).replace(os.sep, "/")
+            full = os.path.join(dirpath, name)
+            try:
+                with open(full, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            repls = []
+            for m in re.finditer(r"\[\[([^\]\n]*?)\]\]", content):
+                raw = m.group(1).strip()
+                pipe = raw.find("|")
+                target = raw[:pipe].strip() if pipe != -1 else raw
+                alias = raw[pipe + 1 :] if pipe != -1 else None
+                if not target:
+                    continue
+                if "/" in target:
+                    # Ruta completa: archivo o carpeta
+                    if is_file:
+                        if target == old_noext:
+                            repls.append((m.start(1), m.end(1), new_noext, alias))
+                    elif target == frm or target.startswith(frm + "/"):
+                        repls.append((m.start(1), m.end(1), to + target[len(frm) :], alias))
+                elif is_file and old_base != new_base and target == old_base:
+                    # Nombre base: solo si apuntaba realmente al archivo renombrado
+                    if _resolve_wikilink(target, rel, planets_before, by_base_before) == frm:
+                        repls.append((m.start(1), m.end(1), new_base, alias))
+            if not repls:
+                continue
+            out = content
+            for start, end, sub, alias in reversed(repls):
+                new_raw = sub if alias is None else sub + "|" + alias
+                out = out[:start] + new_raw + out[end:]
+            if out != content:
+                with open(full, "w", encoding="utf-8") as f:
+                    f.write(out)
+                updated += 1
+
+    # Nota índice de la galaxia
+    key = load_galaxy()
+    index = load_index_notes().get(key)
+    if index and (index == frm or index.startswith(frm + "/")):
+        notes = load_index_notes()
+        notes[key] = to + index[len(frm) :]
+        save_index_notes(notes)
+
+    return jsonify({"from": body.get("from"), "to": body.get("to"), "updated": updated})
 
 
 @app.delete("/api/file")

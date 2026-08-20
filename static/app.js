@@ -65,6 +65,10 @@
   function closeDrawer() {
     document.body.classList.remove("sidebar-open");
     backdrop.classList.remove("show");
+    if (topbarMQ.matches) {
+      searchInput.value = "";
+      searchResults.classList.add("hidden");
+    }
   }
 
   menuBtn.addEventListener("click", () => {
@@ -73,6 +77,7 @@
   });
 
   backdrop.addEventListener("click", closeDrawer);
+  $("#sidebar-close").addEventListener("click", closeDrawer);
 
   const topbarMQ = window.matchMedia("(max-width: 768px)");
 
@@ -80,10 +85,12 @@
     const sidebarTools = $("#sidebar-tools");
     if (topbarMQ.matches) {
       sidebarTools.append(redoBtn, searchInput, $("#galaxy-btn"), $("#settings-btn"));
+      sidebarTools.appendChild(searchResults);
     } else {
       undoBtn.after(redoBtn);
       $("#graph-btn").after($("#galaxy-btn"), $("#settings-btn"));
       saveState.before(searchInput);
+      document.body.appendChild(searchResults);
     }
   }
 
@@ -413,7 +420,12 @@
         dirty = true;
       }
       await loadTree();
-      if (dirty) await saveFile();
+      if (currentFile) {
+        const data = await api("GET", "/api/file?path=" + encodeURIComponent(currentFile));
+        liveApply(data.content, 0);
+        dirty = false;
+        saveState.textContent = "";
+      }
     } catch (err) {
       alert(err.message);
     }
@@ -508,37 +520,50 @@
   }
 
   async function createEntry(type, folderPath) {
-    const base = folderPath ? folderPath + "/" : "";
     const name = await promptInput(
       type === "planet" ? "New planet" : "New star",
-      base + (type === "planet" ? "untitled.md" : "new-star")
+      type === "planet" ? "untitled.md" : "new-star"
     );
-    if (!name) return;
+    if (!name || !name.trim()) return;
+    let path = name.trim();
+    if (type === "planet" && !path.toLowerCase().endsWith(".md")) path += ".md";
+    if (folderPath && !path.includes("/")) path = folderPath + "/" + path;
     try {
       if (type === "planet") {
-        await api("POST", "/api/file", { path: name });
+        await api("POST", "/api/file", { path });
       } else {
-        await api("POST", "/api/star", { path: name });
+        await api("POST", "/api/star", { path });
       }
       await loadTree();
-      if (type === "planet") await openFile(name);
+      if (type === "planet") await openFile(path);
     } catch (err) {
       alert(err.message);
     }
   }
 
   async function renameEntry(entry) {
-    const name = await promptInput("Rename", entry.path, "Rename");
-    if (!name || name === entry.path) return;
+    const base = entry.path.split("/").pop();
+    const name = await promptInput("Rename", base, "Rename");
+    if (!name || !name.trim()) return;
+    let to = name.trim();
+    if (entry.type === "planet" && !to.toLowerCase().endsWith(".md")) to += ".md";
+    const dir = parentDir(entry.path);
+    if (dir && !to.includes("/")) to = dir + "/" + to;
+    if (to === entry.path) return;
     try {
       if (dirty && currentFile) await saveFile();
-      await api("POST", "/api/rename", { from: entry.path, to: name });
+      await api("POST", "/api/rename", { from: entry.path, to });
       if (currentFile && (currentFile === entry.path || currentFile.startsWith(entry.path + "/"))) {
-        currentFile = entry.type === "planet" ? name : name + currentFile.slice(entry.path.length);
+        currentFile = entry.type === "planet" ? to : to + currentFile.slice(entry.path.length);
         dirty = true;
       }
       await loadTree();
-      if (dirty) await saveFile();
+      if (currentFile) {
+        const data = await api("GET", "/api/file?path=" + encodeURIComponent(currentFile));
+        liveApply(data.content, 0);
+        dirty = false;
+        saveState.textContent = "";
+      }
     } catch (err) {
       alert(err.message);
     }
