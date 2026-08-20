@@ -422,7 +422,8 @@
       await loadTree();
       if (currentFile) {
         const data = await api("GET", "/api/file?path=" + encodeURIComponent(currentFile));
-        liveApply(data.content, 0);
+        const caret = clampOffset(LiveEditor.caretOffset(editor), data.content.length);
+        liveApply(data.content, caret);
         dirty = false;
         saveState.textContent = "";
       }
@@ -560,7 +561,8 @@
       await loadTree();
       if (currentFile) {
         const data = await api("GET", "/api/file?path=" + encodeURIComponent(currentFile));
-        liveApply(data.content, 0);
+        const caret = clampOffset(LiveEditor.caretOffset(editor), data.content.length);
+        liveApply(data.content, caret);
         dirty = false;
         saveState.textContent = "";
       }

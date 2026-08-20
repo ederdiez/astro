@@ -475,6 +475,8 @@ def api_rename():
                 alias = raw[pipe + 1 :] if pipe != -1 else None
                 if not target:
                     continue
+                if is_file and target.endswith(".md"):
+                    target = target[:-3]
                 if "/" in target:
                     # Ruta completa: archivo o carpeta
                     if is_file:
