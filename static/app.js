@@ -287,9 +287,14 @@
     if (window.getSelection && window.getSelection().removeAllRanges) {
       window.getSelection().removeAllRanges();
     }
+    document.addEventListener("touchmove", blockTouchScroll, { passive: false });
     s.row.classList.add("dragging-row");
     s.li.classList.remove("press");
     s.li.classList.add("dragging");
+    document.querySelectorAll(".tree li.show-actions").forEach((li) => {
+      if (li !== s.li) li.classList.remove("show-actions");
+    });
+    s.li.classList.add("show-actions");
     if (s.pointerType === "touch" && navigator.vibrate) navigator.vibrate(10);
     try {
       s.row.setPointerCapture(s.pointerId);
@@ -395,15 +400,27 @@
     if (child) child.style.display = "";
   }
 
+  let scrollRAF = null;
+
   function autoScrollTree(s, cy) {
     const sidebar = $("#sidebar");
-    const rect = sidebar.getBoundingClientRect();
-    const edge = 32;
-    if (cy < rect.top + edge) {
-      sidebar.scrollTop -= 12;
-    } else if (cy > rect.bottom - edge) {
-      sidebar.scrollTop += 12;
-    }
+    if (sidebar.scrollHeight <= sidebar.clientHeight + 1) return;
+    if (scrollRAF) return;
+    scrollRAF = requestAnimationFrame(() => {
+      scrollRAF = null;
+      const rect = sidebar.getBoundingClientRect();
+      const edge = topbarMQ.matches ? 24 : 32;
+      let dir = 0;
+      if (cy < rect.top + edge) dir = -1;
+      else if (cy > rect.bottom - edge) dir = 1;
+      if (!dir) return;
+      sidebar.scrollTop += dir * 10;
+      if (dragState === s) autoScrollTree(s, cy);
+    });
+  }
+
+  function blockTouchScroll(e) {
+    if (dragState && dragState.active) e.preventDefault();
   }
 
   async function performDrop(s) {
@@ -437,6 +454,11 @@
     if (!s) return;
     if (s.timer) clearTimeout(s.timer);
     if (s.expandTimer) clearTimeout(s.expandTimer);
+    if (scrollRAF) {
+      cancelAnimationFrame(scrollRAF);
+      scrollRAF = null;
+    }
+    document.removeEventListener("touchmove", blockTouchScroll);
     if (s.target && s.target.li) s.target.li.classList.remove("drop-target");
     if (s.ghost) s.ghost.remove();
     if (s.rootZone) s.rootZone.remove();
@@ -450,6 +472,12 @@
   document.addEventListener("pointermove", documentPointerMove);
   document.addEventListener("pointerup", documentPointerUp);
   document.addEventListener("pointercancel", documentPointerCancel);
+  document.addEventListener("click", () => {
+    if (performance.now() < suppressTreeClickUntil) return;
+    document.querySelectorAll(".tree li.show-actions").forEach((li) => {
+      li.classList.remove("show-actions");
+    });
+  });
   document.addEventListener("selectstart", (e) => {
     if (dragState) e.preventDefault();
   });

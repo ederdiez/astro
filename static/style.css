@@ -1219,7 +1219,12 @@ body.dragging * {
     font-size: 13px;
   }
 
-  .tree li .actions {
+  .tree li .actions,
+  .tree li:hover .actions {
+    display: none;
+  }
+
+  .tree li.show-actions .actions {
     display: flex;
   }
 
