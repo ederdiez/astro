@@ -138,7 +138,7 @@
       if (isOpen) li.classList.add("open");
       const twist = document.createElement("span");
       twist.className = "twist";
-      twist.textContent = isOpen ? "▾" : "▸";
+      twist.textContent = "▸";
       const icon = document.createElement("span");
       icon.className = "star-icon";
       icon.textContent = "★";
@@ -152,13 +152,10 @@
       const childUl = document.createElement("ul");
       (entry.children || []).forEach((child) => childUl.appendChild(renderEntry(child)));
       li.appendChild(childUl);
-      if (!isOpen) childUl.style.display = "none";
       twist.addEventListener("click", (e) => {
         e.stopPropagation();
         const open = li.classList.toggle("open");
         openState.set(entry.path, open);
-        twist.textContent = open ? "▾" : "▸";
-        childUl.style.display = open ? "" : "none";
       });
       li.addEventListener("click", (e) => {
         if (e.target.closest(".actions")) return;
@@ -225,10 +222,6 @@
     document.querySelectorAll(".tree li.star").forEach((li) => {
       li.classList.remove("open");
       openState.set(li.dataset.path, false);
-      const t = li.querySelector(".twist");
-      if (t) t.textContent = "▸";
-      const child = li.querySelector(":scope > ul");
-      if (child) child.style.display = "none";
     });
   });
 
@@ -394,10 +387,6 @@
     const path = li.dataset.path;
     li.classList.add("open");
     openState.set(path, true);
-    const t = li.querySelector(".twist");
-    if (t) t.textContent = "▾";
-    const child = li.querySelector(":scope > ul");
-    if (child) child.style.display = "";
   }
 
   let scrollRAF = null;
@@ -1482,10 +1471,6 @@
       ) {
         li.classList.add("open");
         openState.set(li.dataset.path, true);
-        const t = li.querySelector(".twist");
-        if (t) t.textContent = "▾";
-        const child = li.querySelector(":scope > ul");
-        if (child) child.style.display = "";
       }
     });
   }
