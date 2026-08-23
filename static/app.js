@@ -191,16 +191,16 @@
       li.classList.add("star");
       const isOpen = openState.has(entry.path) && openState.get(entry.path);
       if (isOpen) li.classList.add("open");
+      const gutter = document.createElement("span");
+      gutter.className = "gutter";
       const twist = document.createElement("span");
       twist.className = "twist";
       twist.textContent = "▸";
-      const icon = document.createElement("span");
-      icon.className = "star-icon";
-      icon.textContent = "★";
+      gutter.appendChild(twist);
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = entry.path.split("/").pop();
-      row.append(twist, icon, name);
+      row.append(gutter, name);
       row.appendChild(actions(li, entry));
       row.addEventListener("pointerdown", (e) => startRowDrag(li, entry, e));
       li.appendChild(row);
@@ -219,13 +219,12 @@
         twist.click();
       });
     } else {
-      const icon = document.createElement("span");
-      icon.className = "planet-icon";
-      icon.textContent = "●";
+      const gutter = document.createElement("span");
+      gutter.className = "gutter";
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = entry.path.split("/").pop();
-      row.append(icon, name);
+      row.append(gutter, name);
       row.appendChild(actions(li, entry));
       row.addEventListener("pointerdown", (e) => startRowDrag(li, entry, e));
       li.appendChild(row);
@@ -349,8 +348,7 @@
     } catch (err) {}
     const ghost = document.createElement("div");
     ghost.className = "drag-ghost";
-    ghost.textContent =
-      (s.entry.type === "star" ? "★ " : "● ") + s.entry.path.split("/").pop();
+    ghost.textContent = s.entry.path.split("/").pop();
     document.body.appendChild(ghost);
     s.ghost = ghost;
     s.ghostW = ghost.offsetWidth;
