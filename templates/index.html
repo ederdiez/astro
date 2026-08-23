@@ -26,26 +26,53 @@
   <div id="backdrop"></div>
 
   <div id="layout">
+    <nav id="ribbon">
+      <button id="sidebar-toggle-btn" title="Toggle sidebar (Ctrl+\)" aria-label="Toggle sidebar">◧</button>
+      <button id="ribbon-new-btn" title="New planet (Ctrl+N)" aria-label="New planet">✚</button>
+      <button id="ribbon-search-btn" title="Quick switcher (Ctrl/Cmd+O)" aria-label="Quick switcher">⌕</button>
+      <span class="ribbon-spacer"></span>
+    </nav>
+
     <aside id="sidebar">
       <div id="sidebar-head">
         <span>FILES</span>
+        <span class="sidebar-head-actions">
+          <button id="new-planet-btn" title="New planet">✚</button>
+          <button id="new-star-btn" title="New star">✚★</button>
+          <button id="collapse-all-btn" title="Collapse all folders">▾▾</button>
+        </span>
         <button id="sidebar-close" title="Close" aria-label="Close">×</button>
-      </div>
-      <div id="tree-toolbar">
-        <button id="new-planet-btn" title="New planet">+ Planet</button>
-        <button id="new-star-btn" title="New star">+ Star</button>
-        <button id="collapse-all-btn" title="Collapse all folders">▾▾</button>
       </div>
       <div id="sidebar-tools"></div>
       <div id="tree-root"></div>
+      <div id="sidebar-resizer" title="Drag to resize"></div>
     </aside>
 
     <main id="workspace">
+      <div id="note-title" contenteditable="true" spellcheck="false" autocorrect="off" autocapitalize="off" data-placeholder="Untitled"></div>
       <div id="editor" contenteditable="true" spellcheck="false" autocorrect="off" autocapitalize="off" data-placeholder="Write markdown…"></div>
     </main>
   </div>
 
-  <div id="search-results" class="hidden"></div>
+  <footer id="statusbar">
+    <span id="status-words">0 words</span>
+    <span id="status-chars">0 characters</span>
+  </footer>
+
+  <div id="quick-switcher" class="hidden">
+    <div id="qs-box">
+      <div id="search-results" class="hidden"></div>
+    </div>
+  </div>
+
+  <div id="command-palette" class="hidden">
+    <div class="cp-box">
+      <input id="cp-input" type="text" placeholder="Type a command…" autocomplete="off">
+      <div id="cp-list" class="cp-list"></div>
+    </div>
+  </div>
+
+  <div id="context-menu" class="hidden"></div>
 
   <div id="graph-overlay" class="hidden">
     <div id="graph-head">

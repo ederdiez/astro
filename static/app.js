@@ -10,6 +10,19 @@
   const backBtn = $("#back-btn");
   const undoBtn = $("#undo-btn");
   const redoBtn = $("#redo-btn");
+  const noteTitle = $("#note-title");
+  const statusWords = $("#status-words");
+  const statusChars = $("#status-chars");
+  const sidebar = $("#sidebar");
+  const ribbon = $("#ribbon");
+  const sidebarToggleBtn = $("#sidebar-toggle-btn");
+  const sidebarResizer = $("#sidebar-resizer");
+  const quickSwitcher = $("#quick-switcher");
+  const qsBox = $("#qs-box");
+  const commandPalette = $("#command-palette");
+  const cpInput = $("#cp-input");
+  const cpList = $("#cp-list");
+  const contextMenu = $("#context-menu");
 
   let tree = [];
   let currentFile = null;
@@ -80,23 +93,65 @@
   $("#sidebar-close").addEventListener("click", closeDrawer);
 
   const topbarMQ = window.matchMedia("(max-width: 768px)");
+  const brandEl = $(".brand");
 
   function layoutMobileTopbar() {
     const sidebarTools = $("#sidebar-tools");
     if (topbarMQ.matches) {
+      brandEl.after($("#graph-btn"));
       sidebarTools.append(redoBtn, searchInput, $("#galaxy-btn"), $("#settings-btn"));
       sidebarTools.appendChild(searchResults);
     } else {
       undoBtn.after(redoBtn);
-      $("#graph-btn").after($("#galaxy-btn"), $("#settings-btn"));
-      saveState.before(searchInput);
-      document.body.appendChild(searchResults);
+      ribbon.append($("#graph-btn"), $("#galaxy-btn"), $("#settings-btn"));
+      qsBox.prepend(searchInput);
+      qsBox.appendChild(searchResults);
     }
   }
 
   if (topbarMQ.addEventListener) topbarMQ.addEventListener("change", layoutMobileTopbar);
   else topbarMQ.addListener(layoutMobileTopbar);
   layoutMobileTopbar();
+
+  // ---------- Desktop sidebar collapse / resize ----------
+
+  const SIDEBAR_WIDTH_KEY = "astro-sidebar-width";
+  const SIDEBAR_COLLAPSED_KEY = "astro-sidebar-collapsed";
+
+  const savedWidth = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY), 10);
+  if (Number.isFinite(savedWidth)) {
+    sidebar.style.width = Math.min(480, Math.max(180, savedWidth)) + "px";
+  }
+  if (localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") {
+    document.body.classList.add("sidebar-collapsed");
+  }
+
+  sidebarToggleBtn.addEventListener("click", () => {
+    const collapsed = document.body.classList.toggle("sidebar-collapsed");
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  });
+
+  sidebarResizer.addEventListener("pointerdown", (e) => {
+    if (topbarMQ.matches) return;
+    e.preventDefault();
+    document.body.classList.add("sidebar-resizing");
+    sidebarResizer.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const w = Math.min(480, Math.max(180, ev.clientX));
+      sidebar.style.width = w + "px";
+    };
+    const up = () => {
+      document.body.classList.remove("sidebar-resizing");
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, parseInt(sidebar.style.width, 10));
+      sidebarResizer.removeEventListener("pointermove", move);
+      sidebarResizer.removeEventListener("pointerup", up);
+    };
+    sidebarResizer.addEventListener("pointermove", move);
+    sidebarResizer.addEventListener("pointerup", up);
+  });
+
+  $("#ribbon-new-btn").addEventListener("click", () => createEntry("planet", ""));
+  $("#ribbon-search-btn").addEventListener("click", () => openQuickSwitcher());
 
   // ---------- Tree ----------
 
@@ -470,9 +525,6 @@
   document.addEventListener("selectstart", (e) => {
     if (dragState) e.preventDefault();
   });
-  treeRoot.addEventListener("contextmenu", (e) => {
-    if (dragState) e.preventDefault();
-  });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && dragState) cleanupDrag(true);
   });
@@ -490,6 +542,7 @@
     editor.scrollTop = 0;
     dirty = false;
     saveState.textContent = "";
+    updateNoteTitle();
     document.querySelectorAll(".tree li").forEach((li) => li.classList.remove("selected"));
     const li = document.querySelector(`.tree li[data-path="${CSS.escape(path)}"]`);
     if (li) li.classList.add("selected");
@@ -567,6 +620,10 @@
     if (entry.type === "planet" && !to.toLowerCase().endsWith(".md")) to += ".md";
     const dir = parentDir(entry.path);
     if (dir && !to.includes("/")) to = dir + "/" + to;
+    await doRename(entry, to);
+  }
+
+  async function doRename(entry, to) {
     if (to === entry.path) return;
     try {
       if (dirty && currentFile) await saveFile();
@@ -582,6 +639,7 @@
         liveApply(data.content, caret);
         dirty = false;
         saveState.textContent = "";
+        updateNoteTitle();
       }
     } catch (err) {
       alert(err.message);
@@ -601,6 +659,8 @@
         editor.innerHTML = "";
         lastSource = "";
         dirty = false;
+        updateNoteTitle();
+        updateStatusBar("");
       }
       await loadTree();
     } catch (err) {
@@ -677,8 +737,53 @@
       suppressSel = true;
     }
     lastSource = source;
+    updateStatusBar(source);
     if (caret >= 0) requestAnimationFrame(() => maybeShowAutocomplete(source, caret));
   }
+
+  function updateStatusBar(source) {
+    const trimmed = source.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    statusWords.textContent = words + (words === 1 ? " word" : " words");
+    statusChars.textContent = source.length + (source.length === 1 ? " character" : " characters");
+  }
+
+  // ---------- Note title ----------
+
+  function updateNoteTitle() {
+    if (!currentFile) {
+      noteTitle.textContent = "";
+      return;
+    }
+    const base = currentFile.split("/").pop();
+    noteTitle.textContent = base.toLowerCase().endsWith(".md") ? base.slice(0, -3) : base;
+  }
+
+  noteTitle.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      noteTitle.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      updateNoteTitle();
+      noteTitle.blur();
+    }
+  });
+
+  noteTitle.addEventListener("blur", () => {
+    if (!currentFile) return;
+    const name = noteTitle.textContent.trim();
+    if (!name) {
+      updateNoteTitle();
+      return;
+    }
+    const to = parentDir(currentFile) ? parentDir(currentFile) + "/" + name + ".md" : name + ".md";
+    if (to === currentFile) {
+      updateNoteTitle();
+      return;
+    }
+    doRename({ path: currentFile, type: "planet" }, to);
+  });
 
   editor.addEventListener("beforeinput", (e) => {
     if (e.isComposing) return;
@@ -1506,6 +1611,7 @@
           div.addEventListener("click", () => {
             searchResults.classList.add("hidden");
             searchInput.value = "";
+            closeQuickSwitcher();
             openFile(r.path);
           });
           searchResults.appendChild(div);
@@ -1516,6 +1622,24 @@
       searchResults.classList.add("hidden");
     }
   }
+
+  // ---------- Quick switcher (desktop) ----------
+
+  function openQuickSwitcher() {
+    if (topbarMQ.matches) return;
+    quickSwitcher.classList.remove("hidden");
+    searchInput.value = "";
+    searchResults.classList.add("hidden");
+    searchInput.focus();
+  }
+
+  function closeQuickSwitcher() {
+    quickSwitcher.classList.add("hidden");
+  }
+
+  quickSwitcher.addEventListener("click", (e) => {
+    if (e.target === quickSwitcher) closeQuickSwitcher();
+  });
 
   // ---------- Galaxy switching ----------
 
@@ -1534,6 +1658,8 @@
       lastSource = "";
       dirty = false;
       saveState.textContent = "";
+      updateNoteTitle();
+      updateStatusBar("");
       booted = false;
       history.replaceState({ depth: 0 }, "", location.pathname);
       updateBackBtn();
@@ -1615,19 +1741,37 @@
     dlBtn.addEventListener("click", () => {
       window.location.href = "/api/galaxy/download";
     });
+    const generalPanel = document.createElement("div");
+    generalPanel.className = "settings-panel active";
+    generalPanel.dataset.panel = "general";
+    generalPanel.append(label, row, clearBtn, hint, backupLabel, dlBtn);
+
+    const appearancePanel = document.createElement("div");
+    appearancePanel.className = "settings-panel";
+    appearancePanel.dataset.panel = "appearance";
+    appearancePanel.append(themeLabel, themeSel, speedLabel, speedRow);
+
+    const nav = document.createElement("div");
+    nav.className = "settings-nav";
+    [
+      ["general", "General"],
+      ["appearance", "Appearance"],
+    ].forEach(([id, navLabel], i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = navLabel;
+      b.className = "settings-nav-btn" + (i === 0 ? " active" : "");
+      b.addEventListener("click", () => {
+        nav.querySelectorAll(".settings-nav-btn").forEach((el) => el.classList.remove("active"));
+        b.classList.add("active");
+        [generalPanel, appearancePanel].forEach((p) => p.classList.toggle("active", p.dataset.panel === id));
+      });
+      nav.appendChild(b);
+    });
+
     const body = document.createElement("div");
-    body.append(
-      themeLabel,
-      themeSel,
-      speedLabel,
-      speedRow,
-      label,
-      row,
-      clearBtn,
-      hint,
-      backupLabel,
-      dlBtn
-    );
+    body.className = "settings-shell";
+    body.append(nav, generalPanel, appearancePanel);
     const ok = await showModal("Settings", body, "Save");
     if (!ok) return;
     applyTheme(themeSel.value);
@@ -1919,6 +2063,9 @@
     if (e.key === "Escape") {
       if (!$("#modal-overlay").classList.contains("hidden")) closeModal(null);
       if (!graphOverlay.classList.contains("hidden")) closeGraph();
+      if (!quickSwitcher.classList.contains("hidden")) closeQuickSwitcher();
+      if (!commandPalette.classList.contains("hidden")) closeCommandPalette();
+      closeContextMenu();
     }
   });
 
@@ -1947,7 +2094,166 @@
       e.preventDefault();
       clearTimeout(saveTimer);
       saveFile();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      openCommandPalette();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      openQuickSwitcher();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n" && !e.shiftKey) {
+      e.preventDefault();
+      createEntry("planet", "");
+    } else if (e.ctrlKey && e.key === "\\") {
+      e.preventDefault();
+      sidebarToggleBtn.click();
     }
+  });
+
+  // ---------- Command palette ----------
+
+  const commands = [
+    { label: "New planet", run: () => createEntry("planet", "") },
+    { label: "New star", run: () => createEntry("star", "") },
+    { label: "Open galaxy graph", run: () => openGraph() },
+    { label: "Switch galaxy", run: () => openGalaxyManager() },
+    { label: "Settings", run: () => openSettings() },
+    { label: "Toggle sidebar", run: () => sidebarToggleBtn.click() },
+    { label: "Quick switcher: open note", run: () => openQuickSwitcher() },
+    { label: "Save note", run: () => saveFile() },
+    { label: "Undo", run: () => undo() },
+    { label: "Redo", run: () => redo() },
+  ];
+  let cpItems = [];
+  let cpSel = 0;
+
+  function openCommandPalette() {
+    if (topbarMQ.matches) return;
+    commandPalette.classList.remove("hidden");
+    cpInput.value = "";
+    renderCommandPalette("");
+    cpInput.focus();
+  }
+
+  function closeCommandPalette() {
+    commandPalette.classList.add("hidden");
+  }
+
+  function renderCommandPalette(q) {
+    const query = q.trim().toLowerCase();
+    cpItems = commands.filter((c) => c.label.toLowerCase().includes(query));
+    cpSel = 0;
+    cpList.innerHTML = "";
+    if (!cpItems.length) {
+      cpList.innerHTML = '<div class="cp-item">no matching commands</div>';
+      return;
+    }
+    cpItems.forEach((c, i) => {
+      const div = document.createElement("div");
+      div.className = "cp-item" + (i === cpSel ? " sel" : "");
+      div.textContent = c.label;
+      div.addEventListener("click", () => {
+        closeCommandPalette();
+        c.run();
+      });
+      cpList.appendChild(div);
+    });
+  }
+
+  function cpMove(delta) {
+    if (!cpItems.length) return;
+    cpSel = (cpSel + delta + cpItems.length) % cpItems.length;
+    cpList.querySelectorAll(".cp-item").forEach((el, i) => el.classList.toggle("sel", i === cpSel));
+    const selEl = cpList.children[cpSel];
+    if (selEl) selEl.scrollIntoView({ block: "nearest" });
+  }
+
+  cpInput.addEventListener("input", () => renderCommandPalette(cpInput.value));
+  cpInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      cpMove(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      cpMove(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = cpItems[cpSel];
+      if (item) {
+        closeCommandPalette();
+        item.run();
+      }
+    }
+  });
+  commandPalette.addEventListener("click", (e) => {
+    if (e.target === commandPalette) closeCommandPalette();
+  });
+
+  // ---------- Tree context menu ----------
+
+  function closeContextMenu() {
+    contextMenu.classList.add("hidden");
+    contextMenu.innerHTML = "";
+  }
+
+  function openContextMenu(x, y, items) {
+    contextMenu.innerHTML = "";
+    items.forEach((it) => {
+      if (it.sep) {
+        const sep = document.createElement("div");
+        sep.className = "cm-sep";
+        contextMenu.appendChild(sep);
+        return;
+      }
+      const btn = document.createElement("button");
+      btn.textContent = it.label;
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        it.run();
+      });
+      contextMenu.appendChild(btn);
+    });
+    contextMenu.classList.remove("hidden");
+    const rect = contextMenu.getBoundingClientRect();
+    const left = Math.min(x, window.innerWidth - rect.width - 8);
+    const top = Math.min(y, window.innerHeight - rect.height - 8);
+    contextMenu.style.left = Math.max(4, left) + "px";
+    contextMenu.style.top = Math.max(4, top) + "px";
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!contextMenu.classList.contains("hidden") && !contextMenu.contains(e.target)) closeContextMenu();
+  });
+
+  treeRoot.addEventListener("contextmenu", (e) => {
+    if (dragState) {
+      e.preventDefault();
+      return;
+    }
+    if (topbarMQ.matches) return;
+    e.preventDefault();
+    const li = e.target.closest(".tree li");
+    if (!li) {
+      openContextMenu(e.clientX, e.clientY, [
+        { label: "New planet", run: () => createEntry("planet", "") },
+        { label: "New star", run: () => createEntry("star", "") },
+      ]);
+      return;
+    }
+    const entry = findEntry(tree, li.dataset.path);
+    if (!entry) return;
+    const items = [];
+    if (entry.type === "star") {
+      items.push(
+        { label: "New planet", run: () => createEntry("planet", entry.path) },
+        { label: "New star", run: () => createEntry("star", entry.path) },
+        { sep: true }
+      );
+    }
+    items.push(
+      { label: "Rename", run: () => renameEntry(entry) },
+      { label: "Delete", run: () => deleteEntry(entry) }
+    );
+    openContextMenu(e.clientX, e.clientY, items);
   });
 
   // ---------- Wikilink autocomplete ----------
