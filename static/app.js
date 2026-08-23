@@ -35,9 +35,16 @@
   const THEME_KEY = "astro-theme";
   const SHIP_SPEED_KEY = "astro-ship-speed";
   const SHIP_SPEED_DEFAULT = 0.2;
+  const FONT_SIZE_KEY = "astro-editor-font-size";
+  const FONT_SIZE_DEFAULT = 14;
   const THEMES = [
     { id: "astro", label: "Astro (dark)" },
     { id: "dracula", label: "Dracula" },
+    { id: "nord", label: "Nord" },
+    { id: "solarized", label: "Solarized Dark" },
+    { id: "gruvbox", label: "Gruvbox" },
+    { id: "catppuccin", label: "Catppuccin Mocha" },
+    { id: "light", label: "Astro (light)" },
   ];
 
   function shipSpeed() {
@@ -46,14 +53,28 @@
     return SHIP_SPEED_DEFAULT;
   }
 
+  function editorFontSize() {
+    const v = parseInt(localStorage.getItem(FONT_SIZE_KEY), 10);
+    if (Number.isFinite(v)) return Math.min(20, Math.max(12, v));
+    return FONT_SIZE_DEFAULT;
+  }
+
   function applyTheme(id) {
-    const theme = id === "dracula" ? "dracula" : "astro";
+    const theme = THEMES.some((t) => t.id === id) ? id : "astro";
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_KEY, theme);
     return theme;
   }
 
+  function applyFontSize(px) {
+    const size = Math.min(20, Math.max(12, parseInt(px, 10) || FONT_SIZE_DEFAULT));
+    document.documentElement.style.setProperty("--editor-font-size", size + "px");
+    localStorage.setItem(FONT_SIZE_KEY, String(size));
+    return size;
+  }
+
   applyTheme(localStorage.getItem(THEME_KEY));
+  applyFontSize(editorFontSize());
 
   async function api(method, url, body) {
     const opts = { method, headers: {} };
@@ -1700,6 +1721,24 @@
     const speedRow = document.createElement("div");
     speedRow.className = "import-row";
     speedRow.append(speedRange, speedValue);
+    const fontSizeLabel = document.createElement("div");
+    fontSizeLabel.className = "field-label";
+    fontSizeLabel.textContent = "Editor font size";
+    const fontSizeRange = document.createElement("input");
+    fontSizeRange.type = "range";
+    fontSizeRange.min = "12";
+    fontSizeRange.max = "20";
+    fontSizeRange.step = "1";
+    fontSizeRange.value = String(editorFontSize());
+    const fontSizeValue = document.createElement("span");
+    fontSizeValue.className = "field-label";
+    fontSizeValue.textContent = fontSizeRange.value + "px";
+    fontSizeRange.addEventListener("input", () => {
+      fontSizeValue.textContent = fontSizeRange.value + "px";
+    });
+    const fontSizeRow = document.createElement("div");
+    fontSizeRow.className = "import-row";
+    fontSizeRow.append(fontSizeRange, fontSizeValue);
     let indexNote = null;
     try {
       const data = await api("GET", "/api/index-note");
@@ -1747,7 +1786,7 @@
     const appearancePanel = document.createElement("div");
     appearancePanel.className = "settings-panel";
     appearancePanel.dataset.panel = "appearance";
-    appearancePanel.append(themeLabel, themeSel, speedLabel, speedRow);
+    appearancePanel.append(themeLabel, themeSel, fontSizeLabel, fontSizeRow, speedLabel, speedRow);
 
     const nav = document.createElement("div");
     nav.className = "settings-nav";
@@ -1773,6 +1812,7 @@
     const ok = await showModal("Settings", body, "Save");
     if (!ok) return;
     applyTheme(themeSel.value);
+    applyFontSize(fontSizeRange.value);
     localStorage.setItem(SHIP_SPEED_KEY, speedRange.value);
     if (sim) {
       const ratio = shipSpeed() / (sim._speedBase || shipSpeed());
