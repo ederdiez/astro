@@ -44,6 +44,9 @@
     { id: "solarized", label: "Solarized Dark" },
     { id: "gruvbox", label: "Gruvbox" },
     { id: "catppuccin", label: "Catppuccin Mocha" },
+    { id: "astro-dim", label: "Astro Dim (low contrast)" },
+    { id: "onedark", label: "One Dark" },
+    { id: "tokyonight", label: "Tokyo Night" },
     { id: "light", label: "Astro (light)" },
   ];
 

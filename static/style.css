@@ -97,6 +97,54 @@ html[data-theme="catppuccin"] {
   --link-bg: rgba(180, 190, 254, 0.14);
 }
 
+html[data-theme="astro-dim"] {
+  --bg: #1e1e1e;
+  --fg: #d4d4d4;
+  --dim: #888;
+  --border: #3a3a3a;
+  --border-dim: #2a2a2a;
+  --bg-soft: #252525;
+  --bg-sel: #2d2d2d;
+  --menu-bg: #1e1e1e;
+  --overlay: rgba(30, 30, 30, 0.85);
+  --orbit: #3a3a3a;
+  --orbit-dim: #666;
+  --link: #9d8cf1;
+  --link-bg: rgba(157, 140, 241, 0.16);
+}
+
+html[data-theme="onedark"] {
+  --bg: #282c34;
+  --fg: #abb2bf;
+  --dim: #5c6370;
+  --border: #3e4451;
+  --border-dim: #333842;
+  --bg-soft: #21252b;
+  --bg-sel: #3e4451;
+  --menu-bg: #282c34;
+  --overlay: rgba(40, 44, 52, 0.85);
+  --orbit: #3e4451;
+  --orbit-dim: #5c6370;
+  --link: #61afef;
+  --link-bg: rgba(97, 175, 239, 0.14);
+}
+
+html[data-theme="tokyonight"] {
+  --bg: #1a1b26;
+  --fg: #c0caf5;
+  --dim: #565f89;
+  --border: #292e42;
+  --border-dim: #20222f;
+  --bg-soft: #16161e;
+  --bg-sel: #292e42;
+  --menu-bg: #1a1b26;
+  --overlay: rgba(26, 27, 38, 0.85);
+  --orbit: #292e42;
+  --orbit-dim: #565f89;
+  --link: #7aa2f7;
+  --link-bg: rgba(122, 162, 247, 0.14);
+}
+
 html[data-theme="light"] {
   --bg: #ffffff;
   --fg: #1a1a1a;
@@ -676,7 +724,7 @@ body.dragging * {
   outline: none;
   padding: 8px 24px;
   padding-bottom: calc(16px + env(safe-area-inset-bottom));
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: var(--editor-font-size);
   line-height: 1.6;
   caret-color: var(--fg);
