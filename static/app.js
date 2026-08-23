@@ -189,7 +189,7 @@
     row.className = "row";
     if (entry.type === "star") {
       li.classList.add("star");
-      const isOpen = !openState.has(entry.path) || openState.get(entry.path);
+      const isOpen = openState.has(entry.path) && openState.get(entry.path);
       if (isOpen) li.classList.add("open");
       const twist = document.createElement("span");
       twist.className = "twist";
