@@ -7,6 +7,7 @@ import shutil
 import zipfile
 
 from flask import Flask, jsonify, render_template, request, send_file
+from werkzeug.exceptions import HTTPException
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GALAXIES_DIR = os.path.join(BASE_DIR, "galaxies")
@@ -15,11 +16,35 @@ INDEX_NOTE_FILE = os.path.join(BASE_DIR, "index_note.json")
 
 VALID_NAME_RE = re.compile(r"^[^/\\:*?\"<>|\x00-\x1f]+$")
 IMPORT_SKIP_DIRS = {".venv", "__pycache__", "node_modules", ".git", "static", "templates"}
+SEARCH_LIMIT = 200
 
 HOME_DIR = os.path.realpath(os.path.expanduser("~"))
 BROWSE_ROOTS = (HOME_DIR, os.path.realpath(BASE_DIR))
 
 app = Flask(__name__)
+
+
+def valid_segment(name):
+    return bool(name) and not name.startswith(".") and bool(VALID_NAME_RE.match(name))
+
+
+def validate_rel(rel, require_md=False):
+    rel = (rel or "").strip().strip("/")
+    if not rel:
+        return None
+    for part in rel.split("/"):
+        if not valid_segment(part):
+            return None
+    if require_md and not rel.lower().endswith(".md"):
+        return None
+    return rel
+
+
+@app.errorhandler(HTTPException)
+def handle_http_error(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": e.description or e.name}), e.code
+    return e
 
 
 def within_browse_roots(target):
@@ -125,7 +150,14 @@ def resolve_in_galaxy(rel):
 def walk_tree(directory, rel_prefix=""):
     entries = []
     try:
-        names = sorted(os.listdir(directory))
+        names = sorted(
+            os.listdir(directory),
+            key=lambda n: (
+                not os.path.isdir(os.path.join(directory, n)),
+                n.casefold(),
+                n,
+            ),
+        )
     except OSError:
         return entries
     for name in names:
@@ -364,12 +396,14 @@ def api_save_file():
         return guard
     rel = request.args.get("path", "")
     body = request.get_json(silent=True) or {}
+    if not rel.lower().endswith(".md"):
+        return jsonify({"error": "only .md files"}), 400
     try:
         path = resolve_in_galaxy(rel)
     except ValueError:
         return jsonify({"error": "path traversal rejected"}), 400
-    if not rel.endswith(".md"):
-        return jsonify({"error": "only .md files"}), 400
+    if os.path.isdir(path):
+        return jsonify({"error": "path is a folder"}), 400
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(body.get("content", ""))
@@ -382,18 +416,21 @@ def api_create_file():
     if guard:
         return guard
     body = request.get_json(silent=True) or {}
-    rel = body.get("path", "")
+    rel = validate_rel(body.get("path", ""), require_md=True)
+    if not rel:
+        return jsonify({"error": "invalid note name"}), 400
     try:
         path = resolve_in_galaxy(rel)
     except ValueError:
         return jsonify({"error": "path traversal rejected"}), 400
-    if not rel.endswith(".md"):
-        return jsonify({"error": "only .md files"}), 400
     if os.path.exists(path):
         return jsonify({"error": "already exists"}), 409
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("")
+    except OSError as e:
+        return jsonify({"error": "could not create note: " + str(e)}), 500
     return jsonify({"path": rel})
 
 
@@ -403,12 +440,21 @@ def api_create_star():
     if guard:
         return guard
     body = request.get_json(silent=True) or {}
-    rel = body.get("path", "")
+    rel = validate_rel(body.get("path", ""))
+    if not rel:
+        return jsonify({"error": "invalid folder name"}), 400
     try:
         path = resolve_in_galaxy(rel)
     except ValueError:
         return jsonify({"error": "path traversal rejected"}), 400
-    os.makedirs(path, exist_ok=True)
+    if os.path.isfile(path):
+        return jsonify({"error": "a note with that name exists"}), 409
+    if os.path.isdir(path):
+        return jsonify({"error": "already exists"}), 409
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        return jsonify({"error": "could not create folder: " + str(e)}), 500
     return jsonify({"path": rel})
 
 
@@ -418,21 +464,28 @@ def api_rename():
     if guard:
         return guard
     body = request.get_json(silent=True) or {}
+    frm = (body.get("from") or "").strip().strip("/")
+    to = validate_rel(body.get("to", ""))
+    if not frm or not to:
+        return jsonify({"error": "invalid name"}), 400
+    if frm == to:
+        return jsonify({"error": "name unchanged"}), 400
+    if to.startswith(frm + "/"):
+        return jsonify({"error": "cannot move a folder inside itself"}), 400
     try:
-        src = resolve_in_galaxy(body.get("from", ""))
-        dst = resolve_in_galaxy(body.get("to", ""))
+        src = resolve_in_galaxy(frm)
+        dst = resolve_in_galaxy(to)
     except ValueError:
         return jsonify({"error": "path traversal rejected"}), 400
     if not os.path.exists(src):
         return jsonify({"error": "source not found"}), 404
+    if src == galaxy_path():
+        return jsonify({"error": "cannot rename the galaxy"}), 400
     if os.path.exists(dst):
         return jsonify({"error": "target already exists"}), 409
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
 
     # Estructura vieja de archivos para resolver wikilinks antes del rename
     root = galaxy_path()
-    frm = body.get("from", "")
-    to = body.get("to", "")
     planets_before = []
     for dirpath, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
@@ -451,7 +504,11 @@ def api_rename():
     old_noext = frm[:-3] if is_file else frm
     new_noext = to[:-3] if to.endswith(".md") else to
 
-    os.rename(src, dst)
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.rename(src, dst)
+    except OSError as e:
+        return jsonify({"error": "rename failed: " + str(e)}), 500
 
     # Reconstruir los wikilinks de todos los planetas tras el rename
     updated = 0
@@ -515,17 +572,24 @@ def api_delete():
     guard = galaxy_guard()
     if guard:
         return guard
-    rel = request.args.get("path", "")
+    rel = (request.args.get("path") or "").strip().strip("/")
+    if not rel:
+        return jsonify({"error": "path required"}), 400
     try:
         path = resolve_in_galaxy(rel)
     except ValueError:
         return jsonify({"error": "path traversal rejected"}), 400
     if not os.path.exists(path):
         return jsonify({"error": "not found"}), 404
-    if os.path.isdir(path):
-        shutil.rmtree(path)
-    else:
-        os.remove(path)
+    if path == galaxy_path():
+        return jsonify({"error": "cannot delete the galaxy"}), 400
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+    except OSError as e:
+        return jsonify({"error": "delete failed: " + str(e)}), 500
     return jsonify({"ok": True})
 
 
@@ -627,17 +691,20 @@ def api_search():
     if not q:
         return jsonify({"results": []})
     root = galaxy_path()
-    results = []
+    title_hits = []
+    content_hits = []
     for dirpath, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for name in files:
+        for name in sorted(files):
             if not name.endswith(".md"):
                 continue
             full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, root)
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
             title = name[:-3]
-            if q in title.lower():
-                results.append({"path": rel, "title": title, "snippet": ""})
+            lower_title = title.lower()
+            if q in lower_title:
+                rank = 0 if lower_title.startswith(q) else 1
+                title_hits.append((rank, lower_title, rel, {"path": rel, "title": title, "snippet": ""}))
                 continue
             try:
                 with open(full, "r", encoding="utf-8", errors="ignore") as f:
@@ -648,7 +715,10 @@ def api_search():
             if idx != -1:
                 start = max(0, idx - 40)
                 snippet = content[start : idx + len(q) + 40].replace("\n", " ")
-                results.append({"path": rel, "title": title, "snippet": snippet})
+                content_hits.append((1, lower_title, rel, {"path": rel, "title": title, "snippet": snippet}))
+    title_hits.sort(key=lambda x: (x[0], x[1], x[2]))
+    content_hits.sort(key=lambda x: (x[1], x[2]))
+    results = [r[3] for r in (title_hits + content_hits)[:SEARCH_LIMIT]]
     return jsonify({"results": results})
 
 

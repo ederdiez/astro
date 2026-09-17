@@ -661,6 +661,9 @@ body.dragging * {
 }
 
 .root-drop-zone {
+  position: sticky;
+  bottom: 8px;
+  z-index: 3;
   margin: 2px 2px 6px;
   padding: 8px;
   border: 1px dashed var(--border);
@@ -668,6 +671,8 @@ body.dragging * {
   color: var(--dim);
   text-align: center;
   font-size: 12px;
+  background: var(--menu-bg);
+  animation: lp-fade-in 0.1s ease;
 }
 
 .root-drop-zone.drop-target {
@@ -1164,6 +1169,53 @@ body.dragging * {
   margin: 4px 2px;
 }
 
+/* ---------- Toasts ---------- */
+
+#toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 600;
+  pointer-events: none;
+  width: max-content;
+  max-width: min(92vw, 440px);
+}
+
+.toast {
+  background: var(--menu-bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 9px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: lp-pop-in 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: auto;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.toast.error {
+  border-color: #e5534b;
+  color: #ffb4ae;
+}
+
+.toast.leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.result-item.sel {
+  background: var(--bg-sel);
+}
+
 #modal-overlay {
   position: fixed;
   inset: 0;
@@ -1514,7 +1566,22 @@ body.dragging * {
 }
 
 .graph-label {
+  fill: var(--dim);
   pointer-events: none;
+  font-size: calc(10px * var(--gscale, 1));
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: calc(3px * var(--gscale, 1));
+  stroke-linejoin: round;
+}
+
+#graph-svg .planet-node .graph-label {
+  display: none;
+}
+
+#graph-svg.show-planet-labels .planet-node .graph-label,
+#graph-svg .planet-node.current .graph-label {
+  display: block;
 }
 
 #graph-svg.mini .graph-label {
@@ -1525,12 +1592,25 @@ body.dragging * {
   pointer-events: auto;
 }
 
-.orbit-body {
-  pointer-events: none;
+.graph-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
 }
 
-.orbit-body.graph-node {
-  pointer-events: auto;
+.graph-body {
+  stroke: var(--fg);
+  stroke-opacity: 0.3;
+  stroke-width: 0.75;
+}
+
+.graph-node.current .graph-body {
+  stroke-opacity: 1;
+  stroke-width: 1.5;
+}
+
+.graph-node:hover .graph-body {
+  stroke-opacity: 0.85;
 }
 
 /* ---------- Mobile ---------- */
@@ -1562,9 +1642,19 @@ body.dragging * {
   #topbar > #redo-btn,
   #topbar > #search-input,
   #topbar > #galaxy-btn,
-  #topbar > #settings-btn,
-  #topbar > .save-state {
+  #topbar > #settings-btn {
     display: none;
+  }
+
+  #topbar > .save-state {
+    display: block;
+    margin-left: 2px;
+    min-width: 0;
+    max-width: 76px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   #topbar .brand {
@@ -1754,6 +1844,28 @@ body.dragging * {
     line-height: 1.4;
   }
 
+  #graph-head {
+    padding: 4px 8px;
+  }
+
+  #graph-head > span {
+    display: none;
+  }
+
+  #graph-tools {
+    margin-left: auto;
+  }
+
+  #graph-legend {
+    gap: 10px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  #graph-legend .lg-nav {
+    display: none;
+  }
+
   #modal-overlay {
     align-items: flex-end;
   }
@@ -1774,6 +1886,11 @@ body.dragging * {
     padding: 12px 8px;
   }
 
+  #modal-body input,
+  #modal-body select {
+    font-size: 16px;
+  }
+
   .modal-actions button {
     min-width: 80px;
     min-height: 44px;
@@ -1786,5 +1903,21 @@ body.dragging * {
   *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+@media (hover: none) {
+  .tree li:hover,
+  .sidebar-head-actions button:hover,
+  #sidebar-tools button:hover,
+  .result-item:hover,
+  .cp-item:hover,
+  #context-menu button:hover,
+  #modal-body .dir-list li:hover,
+  #modal-body .galaxy-list li:hover,
+  #ribbon button:hover,
+  #topbar button:hover {
+    background: transparent;
+    color: inherit;
   }
 }

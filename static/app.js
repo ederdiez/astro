@@ -66,6 +66,11 @@
     const theme = THEMES.some((t) => t.id === id) ? id : "astro";
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_KEY, theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+      if (bg) meta.setAttribute("content", bg);
+    }
     return theme;
   }
 
@@ -94,6 +99,27 @@
     return data;
   }
 
+  // ---------- Toasts ----------
+
+  function toast(message, kind) {
+    const box = $("#toasts");
+    if (!box) return;
+    while (box.children.length >= 3) box.firstElementChild.remove();
+    const el = document.createElement("div");
+    el.className = "toast" + (kind ? " " + kind : "");
+    el.textContent = message;
+    box.appendChild(el);
+    setTimeout(() => {
+      el.classList.add("leaving");
+      setTimeout(() => el.remove(), 220);
+    }, kind === "error" ? 4500 : 2200);
+  }
+
+  function galaxyName(path) {
+    if (!path) return "galaxies";
+    return path.split("/").filter(Boolean).pop() || path;
+  }
+
   // ---------- Mobile drawer + tabs ----------
 
   const menuBtn = $("#menu-btn");
@@ -105,6 +131,8 @@
     if (topbarMQ.matches) {
       searchInput.value = "";
       searchResults.classList.add("hidden");
+      searchSel = -1;
+      searchSeq++;
     }
   }
 
@@ -123,7 +151,7 @@
     const sidebarTools = $("#sidebar-tools");
     if (topbarMQ.matches) {
       brandEl.after($("#graph-btn"));
-      sidebarTools.append(redoBtn, searchInput, $("#galaxy-btn"), $("#settings-btn"));
+      sidebarTools.append(searchInput, $("#galaxy-btn"), $("#settings-btn"));
       sidebarTools.appendChild(searchResults);
     } else {
       undoBtn.after(redoBtn);
@@ -224,6 +252,7 @@
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = entry.path.split("/").pop();
+      name.title = entry.path;
       row.append(gutter, name);
       row.appendChild(actions(li, entry));
       row.addEventListener("pointerdown", (e) => startRowDrag(li, entry, e));
@@ -247,7 +276,8 @@
       gutter.className = "gutter";
       const name = document.createElement("span");
       name.className = "name";
-      name.textContent = entry.path.split("/").pop();
+      name.textContent = entry.path.split("/").pop().replace(/\.md$/i, "");
+      name.title = entry.path;
       row.append(gutter, name);
       row.appendChild(actions(li, entry));
       row.addEventListener("pointerdown", (e) => startRowDrag(li, entry, e));
@@ -278,8 +308,8 @@
       mk("+p", () => createEntry("planet", entry.path), "New planet");
       mk("+s", () => createEntry("star", entry.path), "New star");
     }
-    mk("✎", () => renameEntry(entry));
-    mk("×", () => deleteEntry(entry));
+    mk("✎", () => renameEntry(entry), "Rename");
+    mk("×", () => deleteEntry(entry), "Delete");
     return box;
   }
 
@@ -348,7 +378,9 @@
     };
     document.body.classList.add("dragging");
     li.classList.add("press");
-    dragState.timer = setTimeout(() => activateDrag(dragState), LONG_PRESS_MS);
+    if (e.pointerType !== "mouse") {
+      dragState.timer = setTimeout(() => activateDrag(dragState), LONG_PRESS_MS);
+    }
   }
 
   function activateDrag(s) {
@@ -372,7 +404,9 @@
     } catch (err) {}
     const ghost = document.createElement("div");
     ghost.className = "drag-ghost";
-    ghost.textContent = s.entry.path.split("/").pop();
+    const ghostName = s.entry.path.split("/").pop();
+    ghost.textContent =
+      s.entry.type === "planet" ? ghostName.replace(/\.md$/i, "") : ghostName;
     document.body.appendChild(ghost);
     s.ghost = ghost;
     s.ghostW = ghost.offsetWidth;
@@ -380,7 +414,7 @@
     const zone = document.createElement("div");
     zone.className = "root-drop-zone";
     zone.textContent = "move to root";
-    treeRoot.prepend(zone);
+    treeRoot.appendChild(zone);
     s.rootZone = zone;
     positionGhost(s, s.startX, s.startY);
   }
@@ -398,7 +432,10 @@
     const s = dragState;
     if (!s || e.pointerId !== s.pointerId) return;
     if (!s.active) {
-      if (Math.hypot(e.clientX - s.startX, e.clientY - s.startY) > DRAG_CANCEL_DIST) {
+      const dist = Math.hypot(e.clientX - s.startX, e.clientY - s.startY);
+      if (s.pointerType === "mouse") {
+        if (dist > 4) activateDrag(s);
+      } else if (dist > DRAG_CANCEL_DIST) {
         cleanupDrag(false);
       }
       return;
@@ -498,6 +535,7 @@
     try {
       if (dirty && currentFile) await saveFile();
       await api("POST", "/api/rename", { from, to });
+      remapOpenState(from, to);
       if (currentFile && (currentFile === from || currentFile.startsWith(from + "/"))) {
         currentFile = to + currentFile.slice(from.length);
         dirty = true;
@@ -508,10 +546,11 @@
         const caret = clampOffset(LiveEditor.caretOffset(editor), data.content.length);
         liveApply(data.content, caret);
         dirty = false;
-        saveState.textContent = "";
+        setSaveState("");
+        markSelected(currentFile);
       }
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -555,7 +594,13 @@
 
   async function openFile(path, opts) {
     if (dirty && currentFile) await saveFile();
-    const data = await api("GET", "/api/file?path=" + encodeURIComponent(path));
+    let data;
+    try {
+      data = await api("GET", "/api/file?path=" + encodeURIComponent(path));
+    } catch (err) {
+      toast(err.message, "error");
+      return false;
+    }
     currentFile = path;
     undoStack.length = 0;
     redoStack.length = 0;
@@ -563,11 +608,9 @@
     liveApply(data.content, 0);
     editor.scrollTop = 0;
     dirty = false;
-    saveState.textContent = "";
+    setSaveState("");
     updateNoteTitle();
-    document.querySelectorAll(".tree li").forEach((li) => li.classList.remove("selected"));
-    const li = document.querySelector(`.tree li[data-path="${CSS.escape(path)}"]`);
-    if (li) li.classList.add("selected");
+    markSelected(path);
     closeDrawer();
     editor.focus();
     if (!opts || !opts.noHistory) {
@@ -580,6 +623,44 @@
       }
       updateBackBtn();
     }
+    return true;
+  }
+
+  function revealInTree(path) {
+    let idx = path.lastIndexOf("/");
+    while (idx !== -1) {
+      const folder = path.slice(0, idx);
+      const li = document.querySelector(`.tree li[data-path="${CSS.escape(folder)}"]`);
+      if (li && !li.classList.contains("open")) {
+        li.classList.add("open");
+        openState.set(folder, true);
+      }
+      idx = folder.lastIndexOf("/");
+    }
+  }
+
+  function markSelected(path) {
+    document.querySelectorAll(".tree li.selected").forEach((li) => li.classList.remove("selected"));
+    if (!path) return;
+    revealInTree(path);
+    const li = document.querySelector(`.tree li[data-path="${CSS.escape(path)}"]`);
+    if (!li) return;
+    li.classList.add("selected");
+    setTimeout(() => {
+      if (li.isConnected) li.scrollIntoView({ block: "nearest" });
+    }, 190);
+  }
+
+  function remapOpenState(from, to) {
+    const entries = [...openState.entries()];
+    openState.clear();
+    entries.forEach(([key, val]) => {
+      if (key === from || key.startsWith(from + "/")) {
+        openState.set(to + key.slice(from.length), val);
+      } else {
+        openState.set(key, val);
+      }
+    });
   }
 
   function updateBackBtn() {
@@ -596,26 +677,67 @@
     }
   });
 
-  async function saveFile() {
-    if (!currentFile) return;
-    saveState.textContent = "saving…";
-    try {
-      await api("PUT", "/api/file?path=" + encodeURIComponent(currentFile), {
-        content: LiveEditor.source(editor),
-      });
-      dirty = false;
-      const t = new Date();
-      saveState.textContent =
-        "saved " + t.toTimeString().slice(0, 8);
-    } catch (err) {
-      saveState.textContent = "error";
+  function setSaveState(text) {
+    if (!text) {
+      saveState.textContent = "";
+      saveState.title = "";
+      return;
     }
+    saveState.textContent = topbarMQ.matches && text.startsWith("saved") ? "saved" : text;
+    saveState.title = text;
   }
+
+  let saveChain = Promise.resolve();
+
+  function saveFile() {
+    if (!currentFile) return Promise.resolve();
+    const path = currentFile;
+    const content = LiveEditor.source(editor);
+    setSaveState("saving…");
+    const run = saveChain
+      .then(() => api("PUT", "/api/file?path=" + encodeURIComponent(path), { content }))
+      .then(() => {
+        if (path !== currentFile) return;
+        if (LiveEditor.source(editor) === content) {
+          dirty = false;
+          const t = new Date();
+          setSaveState("saved " + t.toTimeString().slice(0, 8));
+        } else {
+          setSaveState("unsaved");
+        }
+      })
+      .catch((err) => {
+        if (path === currentFile) setSaveState("error");
+        toast(err.message, "error");
+      });
+    saveChain = run;
+    return run;
+  }
+
+  function flushSave() {
+    if (!dirty || !currentFile) return;
+    clearTimeout(saveTimer);
+    const content = LiveEditor.source(editor);
+    dirty = false;
+    try {
+      fetch("/api/file?path=" + encodeURIComponent(currentFile), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+        keepalive: true,
+      });
+    } catch (e) {}
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) flushSave();
+  });
+  window.addEventListener("pagehide", flushSave);
 
   async function createEntry(type, folderPath) {
     const name = await promptInput(
       type === "planet" ? "New planet" : "New star",
-      type === "planet" ? "untitled.md" : "new-star"
+      type === "planet" ? "untitled" : "new-star"
     );
     if (!name || !name.trim()) return;
     let path = name.trim();
@@ -630,13 +752,14 @@
       await loadTree();
       if (type === "planet") await openFile(path);
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
   async function renameEntry(entry) {
     const base = entry.path.split("/").pop();
-    const name = await promptInput("Rename", base, "Rename");
+    const display = entry.type === "planet" ? base.replace(/\.md$/i, "") : base;
+    const name = await promptInput("Rename", display, "Rename");
     if (!name || !name.trim()) return;
     let to = name.trim();
     if (entry.type === "planet" && !to.toLowerCase().endsWith(".md")) to += ".md";
@@ -650,6 +773,7 @@
     try {
       if (dirty && currentFile) await saveFile();
       await api("POST", "/api/rename", { from: entry.path, to });
+      remapOpenState(entry.path, to);
       if (currentFile && (currentFile === entry.path || currentFile.startsWith(entry.path + "/"))) {
         currentFile = entry.type === "planet" ? to : to + currentFile.slice(entry.path.length);
         dirty = true;
@@ -660,11 +784,13 @@
         const caret = clampOffset(LiveEditor.caretOffset(editor), data.content.length);
         liveApply(data.content, caret);
         dirty = false;
-        saveState.textContent = "";
-        updateNoteTitle();
+        setSaveState("");
+        markSelected(currentFile);
       }
+      updateNoteTitle();
     } catch (err) {
-      alert(err.message);
+      updateNoteTitle();
+      toast(err.message, "error");
     }
   }
 
@@ -681,12 +807,17 @@
         editor.innerHTML = "";
         lastSource = "";
         dirty = false;
+        undoStack.length = 0;
+        redoStack.length = 0;
+        updateUndoButtons();
         updateNoteTitle();
         updateStatusBar("");
+        history.replaceState({ depth: 0 }, "", location.pathname);
+        updateBackBtn();
       }
       await loadTree();
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -706,15 +837,30 @@
 
   function markDirty() {
     dirty = true;
-    saveState.textContent = "unsaved";
+    setSaveState("unsaved");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveFile, 800);
   }
+
+  let lastUndoPushAt = 0;
 
   function pushUndo(source, caret) {
     undoStack.push({ source, caret });
     if (undoStack.length > 300) undoStack.shift();
     redoStack.length = 0;
+    lastUndoPushAt = 0;
+    updateUndoButtons();
+  }
+
+  function recordUndo(source, caret) {
+    const now = performance.now();
+    const grouped = now - lastUndoPushAt < 700 && undoStack.length > 0;
+    if (!grouped) {
+      undoStack.push({ source, caret });
+      if (undoStack.length > 300) undoStack.shift();
+    }
+    redoStack.length = 0;
+    lastUndoPushAt = now;
     updateUndoButtons();
   }
 
@@ -729,6 +875,7 @@
     const cur = LiveEditor.caretOffset(editor);
     redoStack.push({ source: lastSource, caret: cur >= 0 ? cur : lastSource.length });
     lastEditorAction = "caret";
+    lastUndoPushAt = 0;
     liveApply(entry.source, clampOffset(entry.caret, entry.source.length));
     markDirty();
     editor.focus();
@@ -741,6 +888,7 @@
     const cur = LiveEditor.caretOffset(editor);
     undoStack.push({ source: lastSource, caret: cur >= 0 ? cur : lastSource.length });
     lastEditorAction = "caret";
+    lastUndoPushAt = 0;
     liveApply(entry.source, clampOffset(entry.caret, entry.source.length));
     markDirty();
     editor.focus();
@@ -807,6 +955,12 @@
     doRename({ path: currentFile, type: "planet" }, to);
   });
 
+  noteTitle.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData.getData("text/plain") || "").replace(/\s+/g, " ").trim();
+    document.execCommand("insertText", false, text);
+  });
+
   editor.addEventListener("beforeinput", (e) => {
     if (e.isComposing) return;
     if (e.inputType === "historyUndo") {
@@ -829,7 +983,7 @@
     const offset = LiveEditor.caretOffset(editor);
     const md = LiveEditor.source(editor);
     if (md !== prev) {
-      pushUndo(prev, pendingCaret != null ? pendingCaret : offset);
+      recordUndo(prev, pendingCaret != null ? pendingCaret : offset);
     }
     pendingCaret = null;
     liveApply(md, offset);
@@ -869,11 +1023,139 @@
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
       e.preventDefault();
       redo();
+    } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      if (handleTableEnter() || handleListEnter()) e.preventDefault();
     } else if (e.key === "Tab") {
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && handleTableTab(e.shiftKey)) {
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       document.execCommand("insertText", false, "    ");
     }
   });
+
+  function selectionInTable() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    const node = sel.getRangeAt(0).startContainer;
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    return !!(el && el.closest && el.closest(".lp-table"));
+  }
+
+  function sourceLineAt(offset) {
+    const md = lastSource;
+    const lineStart = md.lastIndexOf("\n", offset - 1) + 1;
+    let lineEnd = md.indexOf("\n", offset);
+    if (lineEnd === -1) lineEnd = md.length;
+    return { md, lineStart, lineEnd, line: md.slice(lineStart, lineEnd) };
+  }
+
+  function parseTableLine(line, lineStart) {
+    const parts = line.split("|");
+    const lead = line.charAt(0) === "|";
+    const trail = line.length > 0 && line.charAt(line.length - 1) === "|";
+    const startIdx = lead ? 1 : 0;
+    const endIdx = trail ? parts.length - 2 : parts.length - 1;
+    const cells = [];
+    let pos = lineStart + (lead ? 1 : 0);
+    for (let i = startIdx; i <= endIdx; i++) {
+      const text = parts[i] || "";
+      const leadWs = (text.match(/^[ \t]*/) || [""])[0].length;
+      cells.push({ start: pos, contentStart: pos + leadWs, end: pos + text.length });
+      pos += text.length + 1;
+    }
+    return { cells, lead, trail };
+  }
+
+  function newTableRow(n) {
+    return "|" + "  |".repeat(Math.max(1, n));
+  }
+
+  function handleTableEnter() {
+    if (!selectionInTable()) return false;
+    const offset = LiveEditor.caretOffset(editor);
+    if (offset < 0) return false;
+    const { md, lineEnd, line } = sourceLineAt(offset);
+    const info = parseTableLine(line, 0);
+    if (!info.cells.length) return false;
+    const insert = "\n" + newTableRow(info.cells.length);
+    pushUndo(lastSource, offset);
+    liveApply(md.slice(0, lineEnd) + insert + md.slice(lineEnd), lineEnd + 3);
+    markDirty();
+    return true;
+  }
+
+  function handleTableTab(shift) {
+    if (!selectionInTable()) return false;
+    const offset = LiveEditor.caretOffset(editor);
+    if (offset < 0) return false;
+    const { md, lineStart, lineEnd, line } = sourceLineAt(offset);
+    const info = parseTableLine(line, lineStart);
+    if (!info.cells.length) return false;
+    let ci = -1;
+    for (let i = 0; i < info.cells.length; i++) {
+      if (offset >= info.cells[i].start && offset <= info.cells[i].end + 1) ci = i;
+    }
+    if (ci === -1) ci = 0;
+    if (!shift) {
+      if (ci < info.cells.length - 1) {
+        liveApply(md, info.cells[ci + 1].contentStart);
+        return true;
+      }
+      const insert = "\n" + newTableRow(info.cells.length);
+      pushUndo(lastSource, offset);
+      liveApply(md.slice(0, lineEnd) + insert + md.slice(lineEnd), lineEnd + 3);
+      markDirty();
+      return true;
+    }
+    if (ci > 0) {
+      liveApply(md, info.cells[ci - 1].contentStart);
+      return true;
+    }
+    if (lineStart > 0) {
+      const prevEnd = lineStart - 1;
+      const prevStart = md.lastIndexOf("\n", prevEnd - 1) + 1;
+      const prevLine = md.slice(prevStart, prevEnd);
+      if (prevLine.indexOf("|") !== -1) {
+        const pinfo = parseTableLine(prevLine, prevStart);
+        if (pinfo.cells.length) {
+          liveApply(md, pinfo.cells[pinfo.cells.length - 1].contentStart);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function handleListEnter() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed || !editor.contains(range.startContainer)) return false;
+    const offset = LiveEditor.caretOffset(editor);
+    if (offset < 0) return false;
+    const { md, lineStart, lineEnd, line } = sourceLineAt(offset);
+    const m = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(.*)$/.exec(line);
+    if (!m) return false;
+    const contentStart = m[1].length + m[2].length + m[3].length;
+    const caretInLine = offset - lineStart;
+    if (caretInLine < contentStart) return false;
+    const before = line.slice(0, caretInLine);
+    const after = line.slice(caretInLine);
+    const contentBefore = before.slice(contentStart);
+    const isOl = /\d/.test(m[2]);
+    const marker = isOl ? String(parseInt(m[2], 10) + 1) + m[2].slice(-1) : m[2];
+    pushUndo(lastSource, offset);
+    if (!contentBefore.trim() && !after.trim()) {
+      liveApply(md.slice(0, lineStart) + md.slice(lineEnd), lineStart);
+    } else {
+      const insert = "\n" + m[1] + marker + m[3];
+      liveApply(md.slice(0, lineStart) + before + insert + after + md.slice(lineEnd), lineStart + before.length + insert.length);
+    }
+    markDirty();
+    return true;
+  }
 
   editor.addEventListener("paste", (e) => {
     e.preventDefault();
@@ -910,8 +1192,22 @@
     const wl = e.target.closest(".lp-wikilink");
     if (wl) {
       e.preventDefault();
-      const file = LiveEditor.resolve(wl.dataset.note || "", currentFile);
-      if (file) openFile(file);
+      const target = (wl.dataset.note || "").trim();
+      const file = LiveEditor.resolve(target, currentFile);
+      if (file) {
+        openFile(file);
+        return;
+      }
+      if (!target) return;
+      let path = target.toLowerCase().endsWith(".md") ? target : target + ".md";
+      if (!path.includes("/")) {
+        const dir = parentDir(currentFile || "");
+        if (dir) path = dir + "/" + path;
+      }
+      api("POST", "/api/file", { path })
+        .then(() => loadTree())
+        .then(() => openFile(path))
+        .catch((err) => toast(err.message, "error"));
       return;
     }
     const ext = e.target.closest(".lp-link");
@@ -958,10 +1254,9 @@
     "#7fd4d4",
     "#4a68c4",
   ];
-  const ORBIT_GAP = 8;
+  const ORBIT_GAP = 12;
   const KEPLER_K = 45;
   const ECC_MAX = 0.12;
-  const COMPRESS = 8;
   const TWO_PI = Math.PI * 2;
   const MIN_SCREEN_A = 0.7;
 
@@ -1000,10 +1295,6 @@
     return E;
   }
 
-  function compressExtent(extent) {
-    return Math.min(extent, COMPRESS * Math.sqrt(extent));
-  }
-
   function computeRadii(node) {
     if (node.type === "planet") {
       node.r = planetRadius(node.size);
@@ -1035,17 +1326,13 @@
     node._orbits = [];
     for (const child of planets.concat(stars)) {
       const e = eccFor(child.path);
-      const bodyR =
-        child.type === "planet" ? child.r : compressExtent(child.sysExtent);
+      const bodyR = child.type === "planet" ? child.r : child.sysExtent;
       const aReq = (node.r + bodyR + ORBIT_GAP) / (1 - e);
       const aSeq = (cum + bodyR) / (1 + e);
       const a = Math.max(aReq, aSeq);
       node._orbits.push({ child, a, e, phi: phaseFor(child.path) });
       cum = a * (1 + e) + bodyR + ORBIT_GAP;
-      reach = Math.max(
-        reach,
-        a * (1 + e) + (child.type === "planet" ? child.r : child.sysExtent)
-      );
+      reach = Math.max(reach, a * (1 + e) + bodyR);
     }
     node.sysExtent = Math.max(node.r, reach);
     return node.sysExtent;
@@ -1110,8 +1397,9 @@
       "transform",
       `translate(${graphView.x},${graphView.y}) scale(${graphView.k})`
     );
-    const mini = graphView.k < 0.35;
-    graphSvg.classList.toggle("mini", mini);
+    graphSvg.style.setProperty("--gscale", String(1 / graphView.k));
+    graphSvg.classList.toggle("mini", graphView.k < 0.35);
+    graphSvg.classList.toggle("show-planet-labels", graphView.k >= 1.6);
     wakeSim();
   }
 
@@ -1248,7 +1536,7 @@
       graphOrbitsBtn.classList.toggle("active", showOrbits);
       buildAstroView(data);
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -1320,84 +1608,124 @@
       const text = document.createElementNS(ns, "text");
       text.setAttribute("class", "graph-label");
       text.setAttribute("text-anchor", "middle");
-      text.setAttribute("dy", r + 12);
-      text.setAttribute("fill", "#888");
-      text.setAttribute("font-size", "10");
+      text.setAttribute("dy", r + 8);
       text.textContent = name;
       return text;
     }
 
-    function buildSystem(parentG, node, parentBody) {
+    const bodiesLayer = document.createElementNS(ns, "g");
+    bodiesLayer.setAttribute("class", "graph-bodies");
+    viewport.appendChild(bodiesLayer);
+
+    function bodyEntry(el, label, r, path, parent, a, e, phi) {
+      return {
+        el,
+        label,
+        r,
+        path,
+        parent,
+        a,
+        e,
+        phi,
+        M: phaseFor(path + ":m"),
+        omega: a ? KEPLER_K / Math.pow(a, 1.5) : 0,
+        sqrt1e2: Math.sqrt(1 - e * e),
+        _sx: 0,
+        _sy: 0,
+        _dx: 0,
+        _dy: null,
+        _anchor: null,
+      };
+    }
+
+    function buildStar(node, parentBody, orb) {
+      const a = orb ? orb.a : 0;
+      const e = orb ? orb.e : 0;
+      const phi = orb ? orb.phi : 0;
       const starG = document.createElementNS(ns, "g");
-      starG.setAttribute("class", "graph-node star-node");
+      starG.setAttribute(
+        "class",
+        "graph-node star-node" + (isCurrentNode(node) ? " current" : "")
+      );
       starG.style.cursor = "pointer";
-      const isCur = isCurrentNode(node);
       const halo = document.createElementNS(ns, "circle");
+      halo.setAttribute("class", "graph-halo");
       halo.setAttribute("r", node.r * 2.6);
       halo.setAttribute("fill", starColor(node.path));
       halo.setAttribute("opacity", "0.16");
       const body = document.createElementNS(ns, "circle");
+      body.setAttribute("class", "graph-body");
       body.setAttribute("r", node.r);
       body.setAttribute("fill", starColor(node.path));
-      body.setAttribute("stroke", isCur ? "#fff" : "rgba(255,255,255,0.35)");
-      body.setAttribute("stroke-width", isCur ? 1.5 : 0.75);
-      starG.append(halo, body, labelFor(node.name, node.r));
+      const starLabel = labelFor(node.name, node.r);
+      const starHit = document.createElementNS(ns, "circle");
+      starHit.setAttribute("class", "graph-hit");
+      starHit.setAttribute("r", node.r + 8);
+      starG.append(starHit, halo, body, starLabel);
       starG.addEventListener("click", () => {
         closeGraph();
         openGraphNode(node);
       });
-      parentG.appendChild(starG);
-      node._orbits.forEach((orb) => {
+      bodiesLayer.appendChild(starG);
+      const entry = bodyEntry(starG, starLabel, node.r, node.path, parentBody, a, e, phi);
+      graphBodies.push(entry);
+      node._orbits.forEach((childOrb) => {
         const orbitG = document.createElementNS(ns, "g");
         orbitG.setAttribute(
           "transform",
-          `rotate(${((orb.phi * 180) / Math.PI).toFixed(2)})`
+          `rotate(${((childOrb.phi * 180) / Math.PI).toFixed(2)})`
         );
         const path = document.createElementNS(ns, "ellipse");
         path.setAttribute("class", "orbit-path");
-        path.setAttribute("cx", -orb.a * orb.e);
+        path.setAttribute("cx", -childOrb.a * childOrb.e);
         path.setAttribute("cy", "0");
-        path.setAttribute("rx", orb.a);
-        path.setAttribute("ry", orb.a * Math.sqrt(1 - orb.e * orb.e));
-        const bodyG = document.createElementNS(ns, "g");
-        bodyG.setAttribute("class", "orbit-body");
-        const common = {
-          path: orb.child.path,
-          M: phaseFor(orb.child.path + ":m"),
-          omega: KEPLER_K / Math.pow(orb.a, 1.5),
-          a: orb.a,
-          e: orb.e,
-          phi: orb.phi,
-          sqrt1e2: Math.sqrt(1 - orb.e * orb.e),
-          parent: parentBody,
-        };
-        if (orb.child.type === "planet") {
-          bodyG.classList.add("graph-node");
+        path.setAttribute("rx", childOrb.a);
+        path.setAttribute("ry", childOrb.a * Math.sqrt(1 - childOrb.e * childOrb.e));
+        if (!showOrbits) path.style.display = "none";
+        orbitG.appendChild(path);
+        starG.appendChild(orbitG);
+
+        if (childOrb.child.type === "planet") {
+          const bodyG = document.createElementNS(ns, "g");
+          bodyG.setAttribute(
+            "class",
+            "graph-node planet-node" + (isCurrentNode(childOrb.child) ? " current" : "")
+          );
           bodyG.style.cursor = "pointer";
-          const isC = isCurrentNode(orb.child);
           const pc = document.createElementNS(ns, "circle");
-          pc.setAttribute("r", orb.child.r);
-          pc.setAttribute("fill", planetColor(orb.child.path));
-          pc.setAttribute("stroke", isC ? "#fff" : "rgba(0,0,0,0.5)");
-          pc.setAttribute("stroke-width", isC ? 1.5 : 0.75);
-          bodyG.append(pc, labelFor(orb.child.name, orb.child.r));
+          pc.setAttribute("class", "graph-body");
+          pc.setAttribute("r", childOrb.child.r);
+          pc.setAttribute("fill", planetColor(childOrb.child.path));
+          const planetLabel = labelFor(childOrb.child.name, childOrb.child.r);
+          const planetHit = document.createElementNS(ns, "circle");
+          planetHit.setAttribute("class", "graph-hit");
+          planetHit.setAttribute("r", childOrb.child.r + 8);
+          bodyG.append(planetHit, pc, planetLabel);
           bodyG.addEventListener("click", () => {
             closeGraph();
-            openFile(orb.child.path);
+            openFile(childOrb.child.path);
           });
-          graphBodies.push({ el: bodyG, isStar: false, ...common });
+          bodiesLayer.appendChild(bodyG);
+          graphBodies.push(
+            bodyEntry(
+              bodyG,
+              planetLabel,
+              childOrb.child.r,
+              childOrb.child.path,
+              entry,
+              childOrb.a,
+              childOrb.e,
+              childOrb.phi
+            )
+          );
         } else {
-          const sub = { el: bodyG, isStar: true, ...common };
-          graphBodies.push(sub);
-          buildSystem(bodyG, orb.child, sub);
+          buildStar(childOrb.child, entry, childOrb);
         }
-        orbitG.append(path, bodyG);
-        if (!showOrbits) path.style.display = "none";
-        starG.appendChild(orbitG);
       });
+      return entry;
     }
 
-    buildSystem(viewport, root, null);
+    buildStar(root, null, null);
 
     const linkColor = (
       getComputedStyle(document.documentElement).getPropertyValue("--link").trim() ||
@@ -1485,21 +1813,50 @@
     let moved = false;
     for (const b of sim.bodies) {
       b.M += b.omega * dt;
-      const cx = b.parent ? b.parent._sx : graphView.x;
-      const cy = b.parent ? b.parent._sy : graphView.y;
-      const screenA = b.a * k;
-      const margin = screenA * (1 + b.e) + 1;
-      const offscreen =
-        screenA >= MIN_SCREEN_A &&
-        (cx + margin < 0 || cx - margin > w || cy + margin < 0 || cy - margin > h);
-      if (offscreen && !b.isStar) continue;
+      const px = b.parent ? b.parent._sx : 0;
+      const py = b.parent ? b.parent._sy : 0;
       const E = solveKepler(b.M % TWO_PI, b.e);
       const cosE = Math.cos(E);
       const sinE = Math.sin(E);
-      const x = b.a * (cosE - b.e);
-      const y = b.a * b.sqrt1e2 * sinE;
-      b._sx = cx + x * k;
-      b._sy = cy + y * k;
+      const ox = b.a * (cosE - b.e);
+      const oy = b.a * b.sqrt1e2 * sinE;
+      const cos = Math.cos(b.phi);
+      const sin = Math.sin(b.phi);
+      const x = px + ox * cos - oy * sin;
+      const y = py + ox * sin + oy * cos;
+      b._sx = x;
+      b._sy = y;
+      if (b.label) {
+        let dx = 0;
+        let dy = b.r + 5 / k;
+        let anchor = "middle";
+        if (b.parent) {
+          const rx = x - b.parent._sx;
+          const ry = y - b.parent._sy;
+          if (Math.abs(rx) > Math.abs(ry) * 1.15) {
+            dx = rx > 0 ? b.r + 4 / k : -(b.r + 4 / k);
+            dy = b.r * 0.35;
+            anchor = rx > 0 ? "start" : "end";
+          } else {
+            dy = ry > 0 ? b.r + 5 / k : -(b.r + 4 / k);
+          }
+        }
+        if (dx !== b._dx || dy !== b._dy || anchor !== b._anchor) {
+          b._dx = dx;
+          b._dy = dy;
+          b._anchor = anchor;
+          b.label.setAttribute("x", dx);
+          b.label.setAttribute("dy", dy);
+          b.label.setAttribute("text-anchor", anchor);
+        }
+      }
+      const screenA = b.a * k;
+      const margin = screenA * (1 + b.e) + 1;
+      const sx = graphView.x + x * k;
+      const sy = graphView.y + y * k;
+      const offscreen =
+        screenA >= MIN_SCREEN_A &&
+        (sx + margin < 0 || sx - margin > w || sy + margin < 0 || sy - margin > h);
       if (screenA >= MIN_SCREEN_A && !offscreen) {
         moved = true;
         const t = x.toFixed(2) + "," + y.toFixed(2);
@@ -1540,19 +1897,14 @@
   }
 
   function bodyPos(b) {
-    const chain = [];
-    for (let x = b; x; x = x.parent) chain.push(x);
-    let rot = 0;
     let x = 0;
     let y = 0;
-    for (let i = chain.length - 1; i >= 0; i--) {
-      const c = chain[i];
-      rot += c.phi;
+    for (let c = b; c; c = c.parent) {
       const E = solveKepler(c.M % TWO_PI, c.e);
       const ox = c.a * (Math.cos(E) - c.e);
       const oy = c.a * c.sqrt1e2 * Math.sin(E);
-      const cos = Math.cos(rot);
-      const sin = Math.sin(rot);
+      const cos = Math.cos(c.phi);
+      const sin = Math.sin(c.phi);
       x += ox * cos - oy * sin;
       y += ox * sin + oy * cos;
     }
@@ -1605,10 +1957,60 @@
   // ---------- Search ----------
 
   let searchTimer = null;
+  let searchSeq = 0;
+  let searchSel = -1;
+
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(doSearch, 300);
+    searchTimer = setTimeout(doSearch, 220);
   });
+
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      searchMove(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      searchMove(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      searchOpen();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      searchInput.value = "";
+      searchResults.classList.add("hidden");
+      closeQuickSwitcher();
+    }
+  });
+
+  function searchItems() {
+    return [...searchResults.querySelectorAll(".result-item[data-path]")];
+  }
+
+  function searchMove(delta) {
+    const items = searchItems();
+    if (!items.length) return;
+    if (searchSel < 0) searchSel = delta > 0 ? 0 : items.length - 1;
+    else searchSel = (searchSel + delta + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle("sel", i === searchSel));
+    const sel = items[searchSel];
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+
+  function searchOpen() {
+    const items = searchItems();
+    if (!items.length) return;
+    const el = items[searchSel >= 0 && searchSel < items.length ? searchSel : 0];
+    if (el) el.click();
+  }
+
+  function openSearchResult(r) {
+    searchResults.classList.add("hidden");
+    searchInput.value = "";
+    searchSel = -1;
+    closeQuickSwitcher();
+    openFile(r.path);
+  }
 
   async function doSearch() {
     const q = searchInput.value.trim();
@@ -1616,8 +2018,11 @@
       searchResults.classList.add("hidden");
       return;
     }
+    const seq = ++searchSeq;
     try {
       const data = await api("GET", "/api/search?q=" + encodeURIComponent(q));
+      if (seq !== searchSeq) return;
+      searchSel = -1;
       searchResults.innerHTML = "";
       if (!data.results.length) {
         searchResults.innerHTML = '<div class="result-item">no matches</div>';
@@ -1625,23 +2030,19 @@
         data.results.forEach((r) => {
           const div = document.createElement("div");
           div.className = "result-item";
+          div.dataset.path = r.path;
           div.innerHTML =
             `<div class="r-title">${escapeHtml(r.title)}</div>` +
             (r.snippet
               ? `<div class="r-snippet">${escapeHtml(r.snippet)}…</div>`
               : "");
-          div.addEventListener("click", () => {
-            searchResults.classList.add("hidden");
-            searchInput.value = "";
-            closeQuickSwitcher();
-            openFile(r.path);
-          });
+          div.addEventListener("click", () => openSearchResult(r));
           searchResults.appendChild(div);
         });
       }
       searchResults.classList.remove("hidden");
     } catch (e) {
-      searchResults.classList.add("hidden");
+      if (seq === searchSeq) searchResults.classList.add("hidden");
     }
   }
 
@@ -1652,6 +2053,8 @@
     quickSwitcher.classList.remove("hidden");
     searchInput.value = "";
     searchResults.classList.add("hidden");
+    searchSel = -1;
+    searchSeq++;
     searchInput.focus();
   }
 
@@ -1669,17 +2072,21 @@
   $("#settings-btn").addEventListener("click", () => openSettings());
 
   async function setGalaxy(path) {
+    if (path === currentGalaxyPath) {
+      closeDrawer();
+      return;
+    }
     try {
       if (dirty && currentFile) await saveFile();
       const data = await api("PUT", "/api/galaxy", { path });
       currentGalaxyPath = data.path;
-      $("#galaxy-label").textContent = data.path || "galaxies";
+      setGalaxyLabel(data.path);
       $("#galaxy-setup").classList.add("hidden");
       currentFile = null;
       editor.innerHTML = "";
       lastSource = "";
       dirty = false;
-      saveState.textContent = "";
+      setSaveState("");
       updateNoteTitle();
       updateStatusBar("");
       booted = false;
@@ -1688,8 +2095,14 @@
       await loadTree();
       await openStartupNote();
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
+  }
+
+  function setGalaxyLabel(path) {
+    const label = $("#galaxy-label");
+    label.textContent = galaxyName(path);
+    label.title = path || "";
   }
 
   // ---------- Settings (index note) ----------
@@ -1825,7 +2238,7 @@
     try {
       await api("PUT", "/api/index-note", { path: input.value.trim() });
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -1857,7 +2270,7 @@
   async function openStartupNote() {
     try {
       const data = await api("GET", "/api/index-note");
-      if (data.path) {
+      if (data.path && collectFiles(tree).includes(data.path)) {
         await openFile(data.path);
         return;
       }
@@ -1923,7 +2336,7 @@
       if (result === null || !selected) return;
       await setGalaxy(selected);
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -1934,7 +2347,7 @@
       const data = await api("POST", "/api/galaxies", { name });
       await setGalaxy(data.path);
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -1968,14 +2381,14 @@
     const source = srcInput.value.trim();
     const name = nameInput.value.trim();
     if (!source) {
-      alert("source folder required");
+      toast("source folder required", "error");
       return;
     }
     try {
       const data = await api("POST", "/api/galaxy/import", { source, name });
       await setGalaxy(data.path);
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   }
 
@@ -2099,6 +2512,12 @@
   $("#modal-ok").addEventListener("click", () => closeModal(true));
   $("#modal-overlay").addEventListener("click", (e) => {
     if (e.target === $("#modal-overlay")) closeModal(null);
+  });
+  $("#modal").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.target && e.target.tagName === "INPUT") {
+      e.preventDefault();
+      closeModal(true);
+    }
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -2420,7 +2839,7 @@
       sub.className = "ac-sub";
       sub.textContent = it.sub;
       row.append(label, sub);
-      row.addEventListener("mousedown", (e) => e.preventDefault());
+      row.addEventListener("pointerdown", (e) => e.preventDefault());
       row.addEventListener("click", () => acSelect(it));
       listEl.appendChild(row);
     });
@@ -2436,13 +2855,16 @@
       }
       popup.style.display = "";
       const pr = popup.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh =
+        (window.visualViewport && window.visualViewport.height) || window.innerHeight;
       let left = rect.left;
-      if (left + pr.width > window.innerWidth - 8) {
-        left = Math.max(8, window.innerWidth - pr.width - 8);
+      if (left + pr.width > vw - 8) {
+        left = Math.max(8, vw - pr.width - 8);
       }
       const below = rect.bottom + 6;
       const top =
-        below + pr.height <= window.innerHeight - 8
+        below + pr.height <= vh - 8
           ? below
           : Math.max(8, rect.top - pr.height - 6);
       popup.style.left = left + "px";
@@ -2498,7 +2920,7 @@
     } catch (e) {}
     if (galaxy && galaxy.path) {
       currentGalaxyPath = galaxy.path;
-      $("#galaxy-label").textContent = galaxy.path;
+      setGalaxyLabel(galaxy.path);
       await loadTree();
       const hash = location.hash ? decodeURIComponent(location.hash.slice(1)) : "";
       if (hash && collectFiles(tree).includes(hash)) {
